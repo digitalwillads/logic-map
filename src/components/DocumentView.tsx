@@ -174,7 +174,7 @@ function AutomationOverviewPage({
         <div className="context-row">
           <span className="context-label">Architecture pattern</span>
           <p>
-            Every automation tab follows the same pattern: (1) a background polling task that runs on an interval, discovers new items, and processes them through an AI pipeline, (2) a database queue that stores processed items with their status, (3) a dedicated chat endpoint that gives Claude context about the specific item being reviewed, and (4) a UI card component that presents the queue and lets users take action. The polling will be replaced by webhooks once live.
+            Every automation tab follows the same pattern: (1) a webhook endpoint that receives events from the external service (Gmail push notifications for new emails, recording service callbacks when a transcript is ready), (2) an AI processing pipeline that classifies, summarizes, or extracts structured data from the raw input, (3) a database queue that stores processed items with their status, (4) a dedicated chat endpoint that gives Claude context about the specific item being reviewed, and (5) a UI card component that presents the queue and lets users take action. Currently using polling as a stopgap during development - webhooks are the real architecture.
           </p>
         </div>
         <div className="context-row">
