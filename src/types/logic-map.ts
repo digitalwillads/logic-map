@@ -26,6 +26,10 @@ export interface System {
   name: string;
   intent: string;
   description: string;
+  why?: string;
+  who?: string;
+  limitations?: string[];
+  history?: string[];
   uncertain?: boolean;
   uncertainty_note?: string;
   invariants?: Invariant[];

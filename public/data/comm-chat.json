@@ -10,6 +10,21 @@
       "name": "Chat Engine",
       "intent": "The core intelligence loop that connects users to Claude with tool access. Takes a user message, gives Claude the ability to call 30+ tools across email, calendar, recordings, and ads, then streams the response back.",
       "description": "Receives chat requests via SSE, runs a loop of Claude reasoning and tool execution (up to 50 iterations), and streams text, tool calls, and tool results back to the frontend in real-time.",
+      "why": "The team needed a single place to interact with all their work tools through natural language instead of switching between Gmail, Calendar, Google Ads, and Slack constantly. Instead of learning each tool's interface, they chat with Claude and it handles the tool switching.",
+      "who": "All team members use this daily. Will uses it most heavily for client management, ad performance review, and email triage. Team members use it for checking schedules, finding meeting notes, and managing tasks.",
+      "limitations": [
+        "Tool calls are sequential, not parallel - a complex request touching 5 tools takes 5x as long as it could",
+        "Chat history loses tool context between sessions - Claude can see what it said but not what tools it used to get there",
+        "The 50-iteration limit means very complex multi-step workflows can get cut off",
+        "The 256KB output truncation can lose data from large email searches or transcript fetches"
+      ],
+      "history": [
+        "Started as a simple Claude chat wrapper to test if conversational tool use was viable for the team",
+        "Added Gmail tools first because email was the team's biggest time sink",
+        "Calendar and recording tools came next to support meeting prep workflows",
+        "Chad Ads integration was added when Will wanted to check campaign performance without logging into the Google Ads dashboard",
+        "Email triage and meeting review pipelines were the latest addition - moving from reactive chat to proactive processing"
+      ],
       "invariants": [
         {
           "id": "inv_output_truncation",
@@ -152,6 +167,18 @@
           "name": "Gmail",
           "intent": "Lets Claude read and send email on behalf of the user. Searching, reading threads, composing new messages, replying, and saving drafts - all through natural language in chat.",
           "description": "Gmail API integration with full email lifecycle: search, read, send (with confirmation), reply, reply-all, and draft. Handles RFC 2822 message construction, multi-part MIME parsing, and Gmail deep link generation. Admin users can search other team members' inboxes via delegation.",
+          "why": "Email is the team's primary communication channel with clients. Being able to search, read, and reply to emails through chat saves constant context-switching between the chat interface and Gmail.",
+          "who": "All team members, especially Will who manages client relationships directly. Admin delegation lets Will check team members' inboxes when covering for them.",
+          "limitations": [
+            "Full email bodies are fetched for every message in search results, making large searches slow",
+            "HTML emails are converted to plain text, which sometimes loses formatting and makes the content hard to read",
+            "No attachment support - Claude can't view or send attachments"
+          ],
+          "history": [
+            "First integration built after Claude chat was working",
+            "Reply and reply-all were added after users kept asking Claude to respond to emails",
+            "Admin delegation was added so Will could search team members' inboxes during coverage"
+          ],
           "invariants": [
             {
               "id": "inv_email_confirmation",
@@ -267,6 +294,18 @@
           "name": "Calendar",
           "intent": "Lets Claude look up the user's schedule, find events, check attendees, and answer questions about meetings. Read-only access to Google Calendar with timezone-aware date handling.",
           "description": "Google Calendar API integration for reading events across all of a user's calendars. Handles timezone conversion, multi-calendar aggregation, deduplication, and attendee details. Admin users can query other team members' calendars via delegation.",
+          "why": "Meeting prep is a big part of the team's workflow - knowing who you're meeting with, what was discussed last time, and what's coming up. Calendar access through chat makes this information instantly available.",
+          "who": "All team members for checking their schedules. Will uses it heavily before client calls to review upcoming meetings and attendee context.",
+          "limitations": [
+            "Read-only access - Claude cannot create, modify, or delete calendar events",
+            "All-day events show as date strings without time, which can be confusing",
+            "Multi-calendar deduplication works by event ID, but shared events sometimes appear as duplicates with different IDs"
+          ],
+          "history": [
+            "Added after Gmail to support meeting prep workflows",
+            "Multi-calendar aggregation was added when team members complained about missing events on shared calendars",
+            "Timezone handling was a recurring source of bugs - the current proactive approach (extracting offset from user's local time) was the third attempt"
+          ],
           "invariants": [
             {
               "id": "inv_timezone",
@@ -330,6 +369,19 @@
           "name": "Meeting Recorder",
           "intent": "Lets Claude find and read meeting recordings and transcripts. Connects calendar events to their recordings so users can ask about what was discussed in a meeting.",
           "description": "Integration with the agency's meeting recording service. Searches for recordings by calendar event ID, participant, or date. Fetches full transcripts with speaker identification and timestamps. Non-admin users only see recordings they participated in.",
+          "why": "Meeting recordings and transcripts are valuable but hard to access after the fact. Being able to ask Claude 'what did we discuss in the meeting with Client X last Tuesday?' and get an answer from the transcript is a huge time saver.",
+          "who": "Will primarily, for reviewing client meeting discussions and extracting context. Also feeds into the meeting review pipeline for automated task extraction.",
+          "limitations": [
+            "Not all meetings have recordings - only those with the recording bot enabled",
+            "Transcript quality varies with audio quality and number of speakers",
+            "Non-admin users can only see recordings they participated in, which can be limiting when covering for a colleague",
+            "The fallback search chain (event ID > participant > transcript) is necessary because recording-to-calendar linking is unreliable"
+          ],
+          "history": [
+            "Integrated the agency's existing recording service rather than building recording capability",
+            "The three-step fallback chain was developed through trial and error as direct event ID lookup proved unreliable",
+            "Admin access to all recordings was added for Will's oversight role"
+          ],
           "functions": [
             {
               "id": "recorder.search_by_event",
@@ -387,6 +439,19 @@
           "name": "Chad Ads (Google Ads)",
           "intent": "Lets Claude interact with Google Ads accounts through a conversational interface. Users can check campaign performance, create campaigns, and manage ads by chatting naturally.",
           "description": "Integration with the Chad Ads API, which provides a chat-style interface to Google Ads. Multi-turn conversations are tracked per customer (ad account) ID. Supports both read operations (checking metrics) and write operations (creating campaigns, changing budgets) with safety checks for writes.",
+          "why": "Will manages Google Ads campaigns for clients and was tired of logging into the Google Ads dashboard to check basic metrics. Being able to ask 'how is the Nzymes campaign performing this week?' in chat is much faster.",
+          "who": "Will exclusively - he manages all client ad accounts. Read operations are frequent (checking performance), write operations are rare and require confirmation.",
+          "limitations": [
+            "Conversation history is ephemeral - stored in tool result text, not the database, so it's lost between chat sessions",
+            "The history can get truncated at 256KB if a conversation about multiple campaigns gets long",
+            "Write safety is enforced via the system prompt, not code - Claude could theoretically skip the confirmation if the prompt doesn't catch the edge case",
+            "Only supports Google Ads via the Chad Ads API - no Meta Ads integration in chat yet"
+          ],
+          "history": [
+            "Added as a conversational wrapper around the Chad Ads API",
+            "Multi-turn conversation tracking was needed because Google Ads queries often require follow-up questions about specific campaigns or date ranges",
+            "Auto-select for single-account users was added after Will got tired of being asked 'which account?' every time"
+          ],
           "entities": [
             {
               "id": "chad_ads_token",
@@ -469,6 +534,17 @@
           "id": "google_tasks",
           "name": "Google Tasks",
           "intent": "Lets Claude and the triage UI create, manage, and organize tasks in Google Tasks. Used both directly through chat and as the backend for meeting review task creation.",
+          "why": "The meeting review pipeline needed a way to turn extracted action items into actual trackable tasks. Google Tasks was chosen because the team already uses it and it integrates with Google Calendar.",
+          "who": "Used indirectly through the meeting review pipeline (auto-creating tasks from meeting action items) and directly through chat (Claude can create/manage tasks on request).",
+          "limitations": [
+            "Google Tasks has a flat hierarchy - no sub-tasks beyond one level of nesting",
+            "No due date reminders through the chat interface - users have to check their task lists",
+            "Task list organization is per-user, so there's no shared team task list"
+          ],
+          "history": [
+            "Added specifically to support the meeting review pipeline's task creation",
+            "Chat tools were added afterwards so team members could manage tasks directly through conversation"
+          ],
           "entities": [
             {
               "id": "google_task",
@@ -512,6 +588,17 @@
           "id": "stripe",
           "name": "Stripe",
           "intent": "Admin-only tools for querying Stripe billing data. Lets Claude look up customers, subscriptions, invoices, charges, and disputes for financial reporting and client management.",
+          "why": "Will needed to quickly check billing status for clients without logging into the Stripe dashboard. Questions like 'has Client X paid this month?' or 'what's our total MRR?' come up in client management.",
+          "who": "Will only - all Stripe tools are admin-gated. Used for financial reporting and checking client payment status.",
+          "limitations": [
+            "Read-only - cannot create charges, refund payments, or modify subscriptions through chat",
+            "No revenue aggregation or MRR calculation built in - Claude has to do the math from raw invoice/subscription data",
+            "Stripe API rate limits apply - large queries across many customers can be slow"
+          ],
+          "history": [
+            "Added for financial visibility during client management conversations",
+            "Admin-only restriction was a deliberate choice - billing data is sensitive and only Will needs access"
+          ],
           "invariants": [
             {
               "id": "inv_stripe_admin_only",
@@ -535,6 +622,18 @@
       "name": "Authentication",
       "intent": "Manages who can use the system and what permissions they have. Handles the entire Google OAuth lifecycle from initial login through token refresh and scope management.",
       "description": "Google OAuth flow with scope tracking, token refresh, admin detection, and session management. Users log in with Google, get a session token stored in localStorage, and their OAuth tokens are refreshed proactively before every API call.",
+      "why": "Everyone on the team already has Google Workspace accounts, so OAuth was the natural choice - no separate passwords to manage, and it gives us access to Gmail and Calendar APIs automatically.",
+      "who": "All team members authenticate through their @digitalwillads.com Google accounts. Will is the primary admin.",
+      "limitations": [
+        "Admin detection is best-effort via Directory API - if that call fails, the user is treated as non-admin until next login",
+        "Auth tokens never expire server-side, so old sessions accumulate in the database",
+        "If a user revokes Google access, the stored refresh token becomes invalid but we don't detect this until the next API call fails"
+      ],
+      "history": [
+        "Initially used a simple password system, switched to Google OAuth when we needed Gmail API access anyway",
+        "Added incremental scope authorization when gmail.send was added - users don't need to re-authorize everything just to grant send access",
+        "Admin detection was added to gate workspace-wide search tools"
+      ],
       "invariants": [
         {
           "id": "inv_google_auth",
@@ -653,6 +752,19 @@
       "id": "email_triage",
       "name": "Email Triage",
       "intent": "Automatically processes incoming Gmail messages, filters noise using AI classification, generates summaries, and presents relevant emails for human triage through a dedicated UI tab.",
+      "why": "The team was spending 1-2 hours per day just reading and sorting email. Most of it was noise - receipts, calendar invites, newsletters, automated notifications. They were missing important client emails buried in the noise. The triage pipeline filters out the junk and surfaces what matters.",
+      "who": "Will primarily, though all team members have it available. Will reviews 30-50 emails per day through the triage queue instead of scrolling through 200+ raw inbox messages.",
+      "limitations": [
+        "AI classification isn't perfect - occasionally filters out an important email or lets noise through",
+        "Email polling is every 120 seconds, so there's a delay between receiving an email and seeing it in the queue",
+        "Calendar context enrichment only looks back 30 days, so context from older client relationships is missed",
+        "No ability to create filter rules through the UI yet - filter rules have to be added directly to the database"
+      ],
+      "history": [
+        "Built because Will said he was 'drowning in email' and wanted Claude to pre-sort his inbox",
+        "The AI classification layer was added after simple keyword/domain filtering wasn't selective enough",
+        "Calendar context enrichment was added so Claude could say 'you met with this person last week about X' when triaging their email"
+      ],
       "invariants": [
         {
           "id": "inv_email_filtered",
@@ -749,6 +861,20 @@
       "id": "meeting_review",
       "name": "Meeting Review",
       "intent": "Processes meeting recordings, uses an AI agent ('Barbara Ann') to extract action items from transcripts, and presents meetings with their extracted tasks for human review and approval.",
+      "why": "After client meetings, action items would get discussed and agreed upon but never tracked. Tasks fell through the cracks because nobody was writing them down consistently. This pipeline automatically extracts tasks from meeting transcripts so nothing gets lost.",
+      "who": "Will uses this after every client meeting. The goal is for account managers (Eddie, Reileigh) to use it for their client meetings too.",
+      "limitations": [
+        "Barbara Ann (the AI agent) sometimes misidentifies who should own a task, especially when multiple people discuss an action item",
+        "Transcript quality depends on the recording service - poor audio leads to poor task extraction",
+        "Meeting polling is every 300 seconds, and transcript processing is slow, so there can be a 10+ minute delay after a meeting ends before tasks appear",
+        "No way to manually trigger processing for a specific meeting - have to wait for the polling cycle"
+      ],
+      "history": [
+        "Started as a manual workflow - Will would paste meeting transcripts into chat and ask Claude to extract tasks",
+        "Automated the pipeline when the manual process proved valuable but tedious",
+        "Named the extraction agent 'Barbara Ann' as an internal codename",
+        "Added Google Tasks integration so accepted tasks go directly into the team's task management system"
+      ],
       "invariants": [
         {
           "id": "inv_meeting_polling_interval",
@@ -835,6 +961,18 @@
       "name": "Database",
       "intent": "Persists all application state - users, sessions, OAuth tokens, chat history, and integration credentials. The single source of truth for who's logged in, what they've said, and what services they've connected.",
       "description": "SQLite database accessed via Diesel ORM with R2D2 connection pooling. 6 tables covering users, auth tokens, Google tokens, chat threads, chat messages, and Chad Ads tokens. All timestamps are UTC ISO 8601 strings. Migrations run automatically on startup.",
+      "why": "SQLite was chosen for simplicity - single-file database, no separate database server to manage, easy to deploy on Fly.io. The application is team-internal with low concurrent usage, so SQLite's limitations aren't a problem.",
+      "who": "Internal infrastructure - no team member interacts with this directly.",
+      "limitations": [
+        "SQLite has limited concurrent write support - the WAL mode and busy timeout help but heavy parallel writes can still fail",
+        "No data backup strategy documented - the database file is on Fly.io's persistent volume",
+        "Old auth tokens and processed email/meeting records accumulate without cleanup"
+      ],
+      "history": [
+        "Chose SQLite + Diesel over Postgres to keep the deployment simple - one binary, one file",
+        "Added WAL mode and connection pooling when background polling tasks started causing lock contention",
+        "Schema grew from 3 tables (users, auth_tokens, google_tokens) to 9 as email triage and meeting review were added"
+      ],
       "invariants": [
         {
           "id": "inv_timestamps_utc",

@@ -135,7 +135,49 @@ function SystemPage({
       {/* Header */}
       <h1>{system.name}</h1>
       <p className="page-lead">{system.intent}</p>
-      <p className="page-body">{system.description}</p>
+
+      {/* Context block: why, who, description */}
+      <div className="context-block">
+        {system.why && (
+          <div className="context-row">
+            <span className="context-label">Why this exists</span>
+            <p>{system.why}</p>
+          </div>
+        )}
+        {system.who && (
+          <div className="context-row">
+            <span className="context-label">Who uses this</span>
+            <p>{system.who}</p>
+          </div>
+        )}
+        <div className="context-row">
+          <span className="context-label">How it works</span>
+          <p>{system.description}</p>
+        </div>
+      </div>
+
+      {/* Limitations */}
+      {system.limitations && system.limitations.length > 0 && (
+        <div className="limitations-block">
+          <h5 className="limitations-heading">Known limitations</h5>
+          <ul>
+            {system.limitations.map((lim, i) => (
+              <li key={i}>{lim}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* History */}
+      {system.history && system.history.length > 0 && (
+        <CollapsibleSection title="History" defaultOpen={false}>
+          <ol className="history-list">
+            {system.history.map((entry, i) => (
+              <li key={i}>{entry}</li>
+            ))}
+          </ol>
+        </CollapsibleSection>
+      )}
 
       {/* Rules */}
       {hasInvariants && (
