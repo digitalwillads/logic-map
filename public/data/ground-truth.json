@@ -47,9 +47,8 @@
       "why": "Every ad platform wants to claim full credit for every conversion. Facebook says it drove the sale, Google says it drove the sale, the email says it drove the sale. The only way to know the truth is to collect your own first-party data from the actual website and stitch it together yourself. That's what Ground Truth does.",
       "who": "Will sets up tracking for each client. The tracking script runs automatically on every page load. Will and the team query BigQuery to analyze attribution, build dashboards, and report to clients.",
       "limitations": [
-        "No server-side cookie persistence yet - relies on browser cookies which get cleared by Safari ITP after 7 days",
-        "Form auto-detection uses heuristics (input name contains 'email') - custom form frameworks may need manual selectors",
-        "Ad blocker extensions can block the tracking script if not proxied through a first-party domain",
+        "No server-side cookie persistence yet - Safari ITP clears browser cookies after 7 days. Cloudflare Worker can set server-side cookies to fix this but not yet wired up for all clients.",
+        "Form auto-detection uses heuristics (input name contains email) - custom form frameworks may need manual CSS selectors passed to generate-tag",
         "No offline conversion support yet - only tracks website interactions, not phone calls or in-person visits"
       ],
       "history": [
@@ -147,7 +146,8 @@
           "limitations": [
             "GTM container snippet must be installed on the client's site (in theme or via plugin)",
             "GTM API rate limit is 30 requests/minute - listing all client accounts can hit this"
-          ]
+          ],
+          "functions": []
         },
         {
           "id": "cloudflare_proxy",
@@ -157,7 +157,8 @@
           "limitations": [
             "Requires client to add a DNS record - adds a setup step",
             "Not yet implemented for all clients - falls back to direct endpoint"
-          ]
+          ],
+          "functions": []
         }
       ]
     },
@@ -246,19 +247,22 @@
           "id": "crm_sync.etl_runner",
           "name": "ETL Runner",
           "description": "The main ETL orchestrator. Iterates over all tracked clients, checks their crm_type, and dispatches to the appropriate platform module. Logs each ETL run (start time, completion, row counts, errors) to the etl_runs table for monitoring and incremental pulls.",
-          "source": "dwa/src/track/etl.rs::run_all"
+          "source": "dwa/src/track/etl.rs::run_all",
+          "decisions": []
         },
         {
           "id": "crm_sync.etl_activecampaign",
           "name": "Active Campaign ETL",
           "description": "Pulls contacts, deals (if CRM feature enabled), email events (incremental, capped at 5000), automations, and automation contacts from Active Campaign's API v3. Maps AC field names to unified schema (e.g., AC status '1' = 'active', value in cents / 100 = dollars, stage ID resolved via dealStages endpoint).",
-          "source": "dwa/src/track/etl.rs::etl_activecampaign, dwa/src/track/activecampaign.rs"
+          "source": "dwa/src/track/etl.rs::etl_activecampaign, dwa/src/track/activecampaign.rs",
+          "decisions": []
         },
         {
           "id": "crm_sync.etl_hubspot",
           "name": "HubSpot ETL",
           "description": "Pulls contacts, deals, and deal-contact associations from HubSpot's CRM v3 API. Uses OAuth refresh token flow for authentication. Maps HubSpot properties to unified schema.",
-          "source": "dwa/src/track/etl.rs::etl_hubspot, dwa/src/track/hubspot.rs"
+          "source": "dwa/src/track/etl.rs::etl_hubspot, dwa/src/track/hubspot.rs",
+          "decisions": []
         }
       ],
       "children": [
@@ -272,7 +276,8 @@
             "Deals/CRM feature requires AC plan upgrade - gracefully skipped if not available",
             "Automation contacts endpoint returns 404 for some automation types",
             "Deal values stored in cents, not dollars - conversion handled in ETL mapping"
-          ]
+          ],
+          "functions": []
         },
         {
           "id": "hubspot",
@@ -282,7 +287,8 @@
           "limitations": [
             "OAuth requires a HubSpot developer app with redirect URL configured",
             "Refresh tokens can expire if not used regularly - needs periodic ETL runs to keep alive"
-          ]
+          ],
+          "functions": []
         }
       ]
     },
@@ -321,7 +327,8 @@
           "limitations": [
             "Developer token required - takes time to get approved by Google",
             "Offline conversion upload not yet implemented"
-          ]
+          ],
+          "functions": []
         },
         {
           "id": "meta_ads",
@@ -331,9 +338,11 @@
           "limitations": [
             "Ad account ID must be configured per client (not stored in client config yet, uses META_AD_ACCOUNT_{SLUG} env workaround)",
             "Event Match Quality check exists but isn't fully wired up"
-          ]
+          ],
+          "functions": []
         }
-      ]
+      ],
+      "functions": []
     },
     {
       "id": "setup_cli",
@@ -351,37 +360,43 @@
           "id": "setup_cli.init_bigquery",
           "name": "init-bigquery",
           "description": "Creates the BigQuery dataset (gt_{slug}) and all 10 tables using the service account. Registers the client in the local SQLite config database.",
-          "source": "dwa/src/track/bigquery.rs::init_bigquery"
+          "source": "dwa/src/track/bigquery.rs::init_bigquery",
+          "decisions": []
         },
         {
           "id": "setup_cli.connect_crm",
           "name": "connect-active-campaign / connect-hubspot",
           "description": "Validates CRM credentials and stores them in the client config. For AC: checks API key against the contacts endpoint. For HubSpot: generates OAuth URL and stores refresh token.",
-          "source": "dwa/src/track/activecampaign.rs::connect, dwa/src/track/hubspot.rs::connect"
+          "source": "dwa/src/track/activecampaign.rs::connect, dwa/src/track/hubspot.rs::connect",
+          "decisions": []
         },
         {
           "id": "setup_cli.connect_ads",
           "name": "connect-google-ads / connect-meta",
           "description": "Validates ad platform access and stores configuration. Google Ads: validates customer ID and searches for Import-type conversion actions. Meta: validates pixel ID and sends a test CAPI event.",
-          "source": "dwa/src/track/google_ads.rs::connect, dwa/src/track/meta.rs::connect"
+          "source": "dwa/src/track/google_ads.rs::connect, dwa/src/track/meta.rs::connect",
+          "decisions": []
         },
         {
           "id": "setup_cli.generate_tag",
           "name": "generate-tag",
           "description": "Generates the JavaScript tracking script configured for the client (write key, form selectors, high-intent pages). Saves to ~/.dwa/tags/{slug}.html. Deployed to the client's GTM container as a Custom HTML tag.",
-          "source": "dwa/src/track/tag_gen.rs::generate_tag_for_client"
+          "source": "dwa/src/track/tag_gen.rs::generate_tag_for_client",
+          "decisions": []
         },
         {
           "id": "setup_cli.verify",
           "name": "verify",
           "description": "Runs end-to-end verification: checks if events are flowing (24h count), identity resolution is working, UTM persistence rate, BigQuery dataset state, CRM sync health, and ad platform configuration. Updates client status to healthy/degraded.",
-          "source": "dwa/src/track/verify.rs::verify"
+          "source": "dwa/src/track/verify.rs::verify",
+          "decisions": []
         },
         {
           "id": "setup_cli.etl_run",
           "name": "etl-run",
           "description": "Triggers a full ETL cycle for one or all clients. Pulls CRM data and ad spend into BigQuery. Logs run stats (duration, row counts, errors) to etl_runs table.",
-          "source": "dwa/src/track/etl.rs::run_all"
+          "source": "dwa/src/track/etl.rs::run_all",
+          "decisions": []
         }
       ]
     },
@@ -412,7 +427,8 @@
             "ad_spend - daily spend by platform/campaign"
           ]
         }
-      ]
+      ],
+      "functions": []
     },
     {
       "id": "auth",
@@ -430,7 +446,8 @@
           "name": "Service account for Google APIs",
           "description": "The service account crm-directory-sync@digital-will-369819.iam.gserviceaccount.com uses domain-wide delegation to impersonate will@digitalwillads.com for GTM, Gmail, and Calendar. JWT is built with the 'sub' claim set to the impersonated user."
         }
-      ]
+      ],
+      "functions": []
     }
   ],
   "relationships": [

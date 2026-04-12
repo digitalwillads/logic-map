@@ -2,7 +2,13 @@ import { useState, useRef, useEffect } from "react";
 import type { LogicMap, System } from "../types/logic-map";
 import { ChatMockup, EmailTriageMockup, MeetingReviewMockup } from "./mockups";
 import { CodeView, type CodeAnnotation } from "./CodeView";
-import { emailTriagePipeline, emailTriagePolling } from "../data/code-annotations";
+import {
+  emailTriagePipeline, emailTriagePolling,
+  chatEndpoint, toolExecutor, claudeClient,
+  meetingPipeline, meetingPolling,
+  gmailClient, calendarClient,
+  recorderTools, chadAdsTools, tasksTools, stripeTools,
+} from "../data/code-annotations";
 import "./document.css";
 
 // Map function/system IDs to their UI mockups
@@ -14,9 +20,36 @@ const mockupMap: Record<string, () => JSX.Element> = {
 
 // Map system IDs to their annotated code files
 const codeMap: Record<string, { label: string; annotation: CodeAnnotation }[]> = {
+  "chat_engine": [
+    { label: "chat_endpoint.rs - SSE streaming and tool loop", annotation: chatEndpoint },
+    { label: "tool_executor.rs - Tool dispatch and scope checking", annotation: toolExecutor },
+    { label: "claude_client.rs - API request construction", annotation: claudeClient },
+  ],
   "email_triage": [
     { label: "pipeline.rs - Email processing pipeline", annotation: emailTriagePipeline },
     { label: "polling.rs - Background polling loop", annotation: emailTriagePolling },
+  ],
+  "meeting_review": [
+    { label: "pipeline.rs - Barbara Ann task extraction", annotation: meetingPipeline },
+    { label: "polling.rs - Recording poll loop", annotation: meetingPolling },
+  ],
+  "gmail": [
+    { label: "client.rs - Gmail API client", annotation: gmailClient },
+  ],
+  "calendar": [
+    { label: "client.rs - Calendar API client", annotation: calendarClient },
+  ],
+  "recorder": [
+    { label: "tools/recorder.rs - Recording search and transcripts", annotation: recorderTools },
+  ],
+  "chad_ads": [
+    { label: "tools/chad_ads.rs - Google Ads conversational interface", annotation: chadAdsTools },
+  ],
+  "google_tasks": [
+    { label: "tools/tasks.rs - Google Tasks management", annotation: tasksTools },
+  ],
+  "stripe": [
+    { label: "tools/stripe.rs - Stripe billing queries", annotation: stripeTools },
   ],
 };
 
@@ -217,14 +250,7 @@ function OverviewPage({
   };
   for (const s of logicMap.systems) countSystem(s);
 
-  // Group systems by role
-  const core = logicMap.systems.filter((s) => s.id === "chat_engine");
-  const pipelines = logicMap.systems.filter(
-    (s) => s.id === "email_triage" || s.id === "meeting_review"
-  );
-  const infra = logicMap.systems.filter(
-    (s) => s.id === "auth" || s.id === "database"
-  );
+  const colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
 
   return (
     <>
@@ -251,16 +277,14 @@ function OverviewPage({
         </div>
       </div>
 
-      <section className="overview-group">
-        <h3 className="overview-group-title">
-          <span className="nav-dot" style={{ background: "#3b82f6" }} />
-          Core
-        </h3>
-        <p className="overview-group-desc">
-          The chat engine and its integrations - how the team interacts with everything.
-        </p>
-        {core.map((s) => (
-          <div key={s.id}>
+      {logicMap.systems.map((s, i) => (
+        <section key={s.id} className="overview-group">
+          <h3 className="overview-group-title">
+            <span className="nav-dot" style={{ background: colors[i % colors.length] }} />
+            {s.name}
+          </h3>
+          {s.intent && <p className="overview-group-desc">{s.intent}</p>}
+          <div>
             <OverviewCard system={s} onNavigate={onNavigate} />
             {s.children && s.children.length > 0 && (
               <div className="overview-children">
@@ -270,34 +294,8 @@ function OverviewPage({
               </div>
             )}
           </div>
-        ))}
-      </section>
-
-      <section className="overview-group">
-        <h3 className="overview-group-title">
-          <span className="nav-dot" style={{ background: "#10b981" }} />
-          Pipelines
-        </h3>
-        <p className="overview-group-desc">
-          Background processing that runs automatically - email filtering and meeting task extraction.
-        </p>
-        {pipelines.map((s) => (
-          <OverviewCard key={s.id} system={s} onNavigate={onNavigate} />
-        ))}
-      </section>
-
-      <section className="overview-group">
-        <h3 className="overview-group-title">
-          <span className="nav-dot" style={{ background: "#8b5cf6" }} />
-          Infrastructure
-        </h3>
-        <p className="overview-group-desc">
-          Authentication and data storage that everything else depends on.
-        </p>
-        {infra.map((s) => (
-          <OverviewCard key={s.id} system={s} onNavigate={onNavigate} />
-        ))}
-      </section>
+        </section>
+      ))}
     </>
   );
 }
