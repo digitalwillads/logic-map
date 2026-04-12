@@ -85,6 +85,16 @@
   color: #111827;
 }
 
+.nav-section-header {
+  font-size: 10px;
+  font-weight: 700;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 16px 16px 4px;
+  list-style: none;
+}
+
 .nav-dot {
   width: 6px;
   height: 6px;

@@ -42,29 +42,39 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
     if (activeSystem) break;
   }
 
-  // Build nav
-  const navItems: {
-    id: string;
-    label: string;
-    indent: boolean;
-    color: string;
-  }[] = [];
-  for (const system of logicMap.systems) {
-    // Assign colors by role
-    let color = "#6b7280"; // default gray
-    if (system.id === "chat_engine") color = "#3b82f6"; // blue
-    if (system.id === "auth" || system.id === "database") color = "#8b5cf6"; // purple - infra
-    if (system.id === "email_triage" || system.id === "meeting_review")
-      color = "#10b981"; // green - pipelines
+  // Build nav with grouped sections
+  type NavItem =
+    | { type: "header"; label: string }
+    | { type: "link"; id: string; label: string; indent: boolean; color: string };
 
-    navItems.push({ id: system.id, label: system.name, indent: false, color });
-    for (const child of system.children || []) {
-      navItems.push({
-        id: child.id,
-        label: child.name,
-        indent: true,
-        color: "#94a3b8",
-      });
+  const navItems: NavItem[] = [];
+
+  // Chat Engine + its children
+  const chatEngine = logicMap.systems.find((s) => s.id === "chat_engine");
+  if (chatEngine) {
+    navItems.push({ type: "link", id: chatEngine.id, label: chatEngine.name, indent: false, color: "#3b82f6" });
+    for (const child of chatEngine.children || []) {
+      navItems.push({ type: "link", id: child.id, label: child.name, indent: true, color: "#94a3b8" });
+    }
+  }
+
+  // Chat Automation Tabs
+  const automationIds = ["email_triage", "meeting_review"];
+  const automations = logicMap.systems.filter((s) => automationIds.includes(s.id));
+  if (automations.length > 0) {
+    navItems.push({ type: "header", label: "Chat Automation Tabs" });
+    for (const s of automations) {
+      navItems.push({ type: "link", id: s.id, label: s.name, indent: false, color: "#10b981" });
+    }
+  }
+
+  // System
+  const infraIds = ["auth", "database"];
+  const infra = logicMap.systems.filter((s) => infraIds.includes(s.id));
+  if (infra.length > 0) {
+    navItems.push({ type: "header", label: "System" });
+    for (const s of infra) {
+      navItems.push({ type: "link", id: s.id, label: s.name, indent: false, color: "#8b5cf6" });
     }
   }
 
@@ -87,20 +97,26 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
           {logicMap.project}
         </a>
         <ul>
-          {navItems.map((item) => (
-            <li key={item.id}>
-              <a
-                className={`${item.indent ? "indent" : ""} ${activePage === item.id ? "active" : ""}`}
-                onClick={() => setActivePage(item.id)}
-              >
-                <span
-                  className="nav-dot"
-                  style={{ background: item.color }}
-                />
+          {navItems.map((item, i) =>
+            item.type === "header" ? (
+              <li key={`h-${i}`} className="nav-section-header">
                 {item.label}
-              </a>
-            </li>
-          ))}
+              </li>
+            ) : (
+              <li key={item.id}>
+                <a
+                  className={`${item.indent ? "indent" : ""} ${activePage === item.id ? "active" : ""}`}
+                  onClick={() => setActivePage(item.id)}
+                >
+                  <span
+                    className="nav-dot"
+                    style={{ background: item.color }}
+                  />
+                  {item.label}
+                </a>
+              </li>
+            )
+          )}
         </ul>
       </nav>
 
