@@ -391,7 +391,7 @@ function SystemPage({
       {/* Child systems (integrations) */}
       {hasChildren && (
         <section className="children-section">
-          <h3 className="section-heading">Integrations</h3>
+          <h3 className="section-heading">Tools</h3>
           <div className="children-grid">
             {system.children!.map((child) => (
               <a
