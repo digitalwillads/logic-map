@@ -4,14 +4,12 @@ import type {
   ExpansionState,
 } from "../types/logic-map";
 
-const SYSTEM_WIDTH = 320;
-const SYSTEM_HEIGHT = 160;
-const FUNCTION_HEIGHT = 120;
-const DECISION_HEIGHT = 100;
-const SYSTEM_GAP_X = 420;
-const SYSTEM_GAP_Y = 260;
-const FUNCTION_GAP_Y = 160;
-const DECISION_GAP_Y = 140;
+const SYSTEM_HEIGHT = 200;
+const FUNCTION_HEIGHT = 140;
+const SYSTEM_GAP_X = 600;
+const SYSTEM_GAP_Y = 400;
+const FUNCTION_GAP_Y = 180;
+const DECISION_GAP_Y = 160;
 const COLUMNS = 3;
 
 export function transformToFlow(
@@ -21,11 +19,7 @@ export function transformToFlow(
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
-  // Track actual Y positions for systems that expand (pushing others down)
-  const systemPositions: Map<string, { x: number; y: number }> = new Map();
-
-  // First pass: calculate positions accounting for expanded systems
-  let currentY = 0;
+  // First pass: calculate row heights accounting for expanded systems
   const rowHeights: number[] = [];
   const systemsByRow: string[][] = [];
 
@@ -37,13 +31,12 @@ export function transformToFlow(
     }
     systemsByRow[row].push(system.id);
 
-    // Calculate height of this system including expanded children
     if (expansion.expandedSystems.has(system.id)) {
-      let expandedHeight = SYSTEM_HEIGHT + 40;
+      let expandedHeight = SYSTEM_HEIGHT + 60;
       system.functions.forEach((fn) => {
-        expandedHeight += FUNCTION_HEIGHT + 20;
+        expandedHeight += FUNCTION_HEIGHT + 30;
         if (expansion.expandedFunctions.has(fn.id)) {
-          expandedHeight += fn.decisions.length * DECISION_GAP_Y + 20;
+          expandedHeight += fn.decisions.length * DECISION_GAP_Y + 30;
         }
       });
       rowHeights[row] = Math.max(rowHeights[row], expandedHeight);
@@ -58,10 +51,8 @@ export function transformToFlow(
     const x = col * SYSTEM_GAP_X;
     let y = 0;
     for (let r = 0; r < row; r++) {
-      y += rowHeights[r] + 80;
+      y += rowHeights[r] + 120;
     }
-
-    systemPositions.set(system.id, { x, y });
 
     nodes.push({
       id: system.id,
@@ -75,10 +66,10 @@ export function transformToFlow(
 
     // If expanded, show functions
     if (expansion.expandedSystems.has(system.id)) {
-      let fnY = y + SYSTEM_HEIGHT + 30;
+      let fnY = y + SYSTEM_HEIGHT + 40;
 
       system.functions.forEach((fn) => {
-        const fnX = x + 20;
+        const fnX = x + 30;
 
         nodes.push({
           id: fn.id,
@@ -98,12 +89,12 @@ export function transformToFlow(
           style: { stroke: "#475569", strokeWidth: 1.5 },
         });
 
-        fnY += FUNCTION_HEIGHT + 20;
+        fnY += FUNCTION_HEIGHT + 30;
 
         // If function expanded, show decisions
         if (expansion.expandedFunctions.has(fn.id)) {
           fn.decisions.forEach((dec) => {
-            const decX = fnX + 20;
+            const decX = fnX + 30;
 
             nodes.push({
               id: dec.id,
@@ -127,7 +118,8 @@ export function transformToFlow(
     }
   });
 
-  // Add relationship edges - anchor to visible nodes or their parent systems
+  // Add relationship edges - no inline labels (they clutter the view).
+  // Descriptions are accessible via hover tooltip on the edge.
   logicMap.relationships.forEach((rel, i) => {
     const fromVisible = nodes.some((n) => n.id === rel.from);
     const toVisible = nodes.some((n) => n.id === rel.to);
@@ -136,7 +128,6 @@ export function transformToFlow(
     const fromAnchor = fromVisible ? rel.from : fromSystem;
     const toAnchor = toVisible ? rel.to : toSystem;
 
-    // Only show if both anchors exist
     const fromExists = nodes.some((n) => n.id === fromAnchor);
     const toExists = nodes.some((n) => n.id === toAnchor);
 
@@ -145,19 +136,9 @@ export function transformToFlow(
         id: `rel-${i}`,
         source: fromAnchor,
         target: toAnchor,
-        type: "smoothstep",
+        type: "relationship",
         animated: true,
-        label: rel.description,
-        labelStyle: {
-          fontSize: 10,
-          fontWeight: 500,
-          fill: "#94a3b8",
-        },
-        labelBgStyle: {
-          fill: "#0f172a",
-          fillOpacity: 0.95,
-        },
-        labelBgPadding: [8, 4] as [number, number],
+        data: { description: rel.description },
         style: {
           stroke: "#3b82f6",
           strokeWidth: 1.5,

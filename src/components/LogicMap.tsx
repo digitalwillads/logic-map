@@ -19,12 +19,17 @@ import { SystemNode } from "./SystemNode";
 import { FunctionNodeComponent } from "./FunctionNode";
 import { DecisionNode } from "./DecisionNode";
 import { Sidebar } from "./Sidebar";
+import { RelationshipEdge } from "./RelationshipEdge";
 import "./nodes.css";
 
 const nodeTypes = {
   systemNode: SystemNode,
   functionNode: FunctionNodeComponent,
   decisionNode: DecisionNode,
+};
+
+const edgeTypes = {
+  relationship: RelationshipEdge,
 };
 
 interface LogicMapProps {
@@ -172,8 +177,9 @@ export function LogicMap({ logicMap }: LogicMapProps) {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           fitView
-          fitViewOptions={{ padding: 0.3 }}
+          fitViewOptions={{ padding: 0.5 }}
           minZoom={0.05}
           maxZoom={2}
           defaultEdgeOptions={{ type: "smoothstep" }}
