@@ -1,0 +1,473 @@
+{
+  "project": "ground-truth",
+  "version": "2026-04-12",
+  "intent": "Cross-platform attribution tracking for Digital Will agency clients. Collects website events, CRM data, email engagement, and ad spend into a unified BigQuery dataset per client. Stitches anonymous visitors to known contacts across platforms so you can answer: which ad brought this lead, what emails did they open, and did they become a customer.",
+  "invariants": [
+    {
+      "id": "inv_no_third_party_cdp",
+      "name": "No third-party CDP",
+      "description": "Events flow directly from client websites to our own ingestion endpoint, then into BigQuery. No RudderStack, Segment, or other middleman. Fewer moving parts, real-time data, full control."
+    },
+    {
+      "id": "inv_unified_schema",
+      "name": "Unified schema across all CRM platforms",
+      "description": "Every table that receives CRM data includes a crm_source discriminator (hubspot, activecampaign, cinc). One contacts table, one deals table - not per-platform copies. A client can use any CRM and it feeds into the same schema."
+    },
+    {
+      "id": "inv_client_scoped_secrets",
+      "name": "Client-scoped secrets in keymaster",
+      "description": "API keys are stored with the client slug in the name (e.g., AC_API_KEY_DREW). Never hardcoded, never in env vars, never in the repo."
+    },
+    {
+      "id": "inv_never_log_secrets",
+      "name": "Never log secrets",
+      "description": "Log presence and key length, never the actual token or key value."
+    }
+  ],
+  "entities": [
+    {
+      "id": "client_config",
+      "name": "ClientConfig",
+      "description": "Per-client configuration stored in local SQLite at ~/.dwa/ground_truth.db. Tracks which platforms are connected, API key references, BigQuery dataset name, setup progress, and last verification timestamp.",
+      "key_fields": [
+        "slug - URL-safe client identifier, primary key",
+        "domain - client's website domain",
+        "crm_type - which CRM module to use (hubspot, activecampaign, cinc)",
+        "bigquery_dataset - dataset name in BigQuery (gt_{slug})",
+        "status - healthy, degraded, or setup_incomplete"
+      ]
+    }
+  ],
+  "systems": [
+    {
+      "id": "event_ingestion",
+      "name": "Event Ingestion",
+      "intent": "Collects website visitor events (page views, form submissions, ad clicks) and writes them directly to BigQuery in real-time.",
+      "description": "A lightweight JavaScript tracking script runs on client websites via Google Tag Manager. When a visitor loads a page, the script captures the page URL, referrer, UTM parameters, ad click IDs (gclid, fbclid), device info, and session data. On form submission, it captures email/phone/name and stitches the anonymous visitor to a known identity. Events are POSTed to a single endpoint on the agency-api (Fly.io) which validates the payload and does a BigQuery streaming insert. No batching, no queue, no third-party - events land in BigQuery within seconds.",
+      "why": "Every ad platform wants to claim full credit for every conversion. Facebook says it drove the sale, Google says it drove the sale, the email says it drove the sale. The only way to know the truth is to collect your own first-party data from the actual website and stitch it together yourself. That's what Ground Truth does.",
+      "who": "Will sets up tracking for each client. The tracking script runs automatically on every page load. Will and the team query BigQuery to analyze attribution, build dashboards, and report to clients.",
+      "limitations": [
+        "No server-side cookie persistence yet - relies on browser cookies which get cleared by Safari ITP after 7 days",
+        "Form auto-detection uses heuristics (input name contains 'email') - custom form frameworks may need manual selectors",
+        "Ad blocker extensions can block the tracking script if not proxied through a first-party domain",
+        "No offline conversion support yet - only tracks website interactions, not phone calls or in-person visits"
+      ],
+      "history": [
+        "Originally designed around RudderStack as the event collection layer",
+        "RudderStack added unnecessary complexity (3-hour sync delays, data plane URL management, 250K event limit on free tier)",
+        "Redesigned to use direct BigQuery streaming inserts via a simple POST endpoint on agency-api",
+        "First client: Drew Guarino (The Guarino Team, lbilocals.com) - April 2026"
+      ],
+      "invariants": [
+        {
+          "id": "inv_first_party",
+          "name": "First-party data collection",
+          "description": "The tracking script and ingestion endpoint should be served from the client's own domain (via Cloudflare proxy) to avoid ad blockers and third-party cookie restrictions. When proxy is not set up, falls back to direct endpoint on agency-api."
+        },
+        {
+          "id": "inv_realtime_insert",
+          "name": "Real-time BigQuery inserts",
+          "description": "Events are inserted into BigQuery via streaming insert immediately on receipt. No batching queues, no warehouse sync schedules. If BigQuery is down, log the error and return 500 so the client-side SDK can retry."
+        }
+      ],
+      "entities": [
+        {
+          "id": "event",
+          "name": "Event",
+          "description": "A single website interaction. Every page view, form submission, and high-intent page visit is an event. Events are the raw material for attribution - they carry the UTM parameters and click IDs that connect a website visit back to the ad that drove it.",
+          "key_fields": [
+            "event_id - unique identifier",
+            "anonymous_id - browser-generated visitor ID (persists across pages, resets on cookie clear)",
+            "user_id - email address (populated after form submission via identify call)",
+            "event_name - page_viewed, form_submitted, high_intent_page_viewed",
+            "utm_source, utm_medium, utm_campaign - which ad/channel brought them",
+            "gclid, fbclid - Google/Meta click IDs for platform-level attribution",
+            "fbc, fbp - Meta cookie values for Conversions API matching"
+          ]
+        },
+        {
+          "id": "identity_graph",
+          "name": "Identity Graph",
+          "description": "Maps anonymous visitor IDs to known contacts. When someone submits a form with their email, we link their anonymous_id to their contact record. This lets us look backwards and see what pages they visited before they identified themselves.",
+          "key_fields": [
+            "anonymous_id - the browser-generated visitor ID",
+            "contact_id - links to the contacts table",
+            "stitched_at - when the identity was linked"
+          ]
+        }
+      ],
+      "functions": [
+        {
+          "id": "event_ingestion.tracking_script",
+          "name": "Tracking Script (JavaScript)",
+          "description": "A self-contained JavaScript snippet that runs on every page of the client's website. Loaded via Google Tag Manager as a Custom HTML tag. Captures page views, UTM parameters, ad click IDs, Meta cookies, and auto-instruments forms to capture lead submissions. On form submit, identifies the visitor by email and fires a form_submitted event.",
+          "source": "dwa/src/track/tag_gen.rs (generates the script), GTM container (deploys it)",
+          "decisions": [
+            {
+              "id": "event_ingestion.tracking_script.form_detection",
+              "name": "Form auto-detection",
+              "description": "Scans all forms matching configurable CSS selectors. For each form, attaches a submit listener that extracts email, phone, and name from inputs based on field name/type heuristics.",
+              "rationale": "Most lead gen sites use standard form field naming. Auto-detection means we don't need custom integration code per client."
+            },
+            {
+              "id": "event_ingestion.tracking_script.high_intent",
+              "name": "High-intent page detection",
+              "description": "Fires a special 'High Intent Page Viewed' event when the visitor hits configurable URL paths like /contact, /schedule, /pricing. These pages signal buying intent and are weighted higher in attribution.",
+              "rationale": "Not all page views are equal. A pricing page visit is far more valuable than a blog post view for attribution purposes."
+            }
+          ]
+        },
+        {
+          "id": "event_ingestion.ingest_endpoint",
+          "name": "Event Ingestion Endpoint",
+          "description": "POST /gt/events on agency-api. Receives event payloads from the tracking script, validates them (requires client_id, event_name, anonymous_id), enriches with server-side data (timestamp, IP-based geo), and does a BigQuery streaming insert into the client's gt_{slug}.events table. Returns 200 on success, 400 on validation error, 500 on BigQuery failure.",
+          "source": "agency-api/src/api/ (to be built)",
+          "decisions": [
+            {
+              "id": "event_ingestion.ingest_endpoint.cors",
+              "name": "CORS allows client domains only",
+              "description": "The endpoint checks the Origin header against the client's registered domain in the config database. Rejects requests from unknown origins.",
+              "rationale": "Prevents event injection from random domains. Each client's tracking script should only be able to write to their own dataset."
+            },
+            {
+              "id": "event_ingestion.ingest_endpoint.no_auth",
+              "name": "No bearer token required",
+              "description": "The endpoint uses a client_id path parameter (the client slug) plus CORS origin validation instead of API key auth. The tracking script runs in browsers where API keys would be exposed.",
+              "rationale": "Browser-side tracking can't use secret keys. Origin validation plus client_id scoping provides sufficient protection."
+            }
+          ]
+        }
+      ],
+      "children": [
+        {
+          "id": "gtm",
+          "name": "Google Tag Manager",
+          "intent": "Deploys the tracking script to client websites without touching their code directly.",
+          "description": "Each client gets a GTM container with our Ground Truth Custom HTML tag. The tag contains the tracking script configured with the client's write key and form selectors. GTM handles loading the script on every page. We access GTM via the API using the Google service account with domain-wide delegation.",
+          "limitations": [
+            "GTM container snippet must be installed on the client's site (in theme or via plugin)",
+            "GTM API rate limit is 30 requests/minute - listing all client accounts can hit this"
+          ]
+        },
+        {
+          "id": "cloudflare_proxy",
+          "name": "Cloudflare First-Party Proxy",
+          "intent": "Serves the tracking script and receives events from the client's own domain to bypass ad blockers.",
+          "description": "Uses Cloudflare for SaaS to create a custom hostname (e.g., t.clientdomain.com) that proxies requests to our ingestion endpoint. The client adds a CNAME record pointing their subdomain to our Cloudflare zone. A Cloudflare Worker handles the proxying and sets server-side cookies for session persistence.",
+          "limitations": [
+            "Requires client to add a DNS record - adds a setup step",
+            "Not yet implemented for all clients - falls back to direct endpoint"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "crm_sync",
+      "name": "CRM Sync",
+      "intent": "Pulls contacts, deals, email engagement, and automation data from each client's CRM platform into BigQuery on a regular schedule.",
+      "description": "Each client uses a different CRM - Active Campaign, HubSpot, CINC, or others. The CRM sync module has a pluggable architecture: one Rust module per platform, all mapping into the same unified BigQuery schema. The ETL dispatches by the client's crm_type field. Contacts go into the contacts table, deals into deals, email events into email_events, and automations into automations - all with a crm_source discriminator so you can filter or join across platforms.",
+      "why": "Website tracking only shows you what happened on the website. To complete the picture, you need to know: did this lead enter an email automation? Did they open the nurture sequence? Did the deal close? CRM sync brings that off-site journey into the same dataset.",
+      "who": "Runs via 'dwa track etl-run' - either manually by Will or on a scheduled cron.",
+      "limitations": [
+        "ETL is pull-based (polling), not push-based (webhooks) - there's a delay between CRM changes and BigQuery updates",
+        "Active Campaign activities endpoint doesn't support date filtering - have to paginate through all records with a hard cap",
+        "Some AC plan tiers don't include Deals/CRM or automation contacts endpoints",
+        "Contact deduplication across platforms not yet implemented - same person in AC and on the website creates two records until identity stitching links them"
+      ],
+      "history": [
+        "HubSpot was the first CRM module, built as part of the original Ground Truth system",
+        "Active Campaign module added April 2026 for Drew Guarino (first non-HubSpot client)",
+        "Unified schema with crm_source discriminator designed to support any number of CRM platforms"
+      ],
+      "invariants": [
+        {
+          "id": "inv_crm_dispatch",
+          "name": "CRM dispatch by crm_type",
+          "description": "The ETL runner checks client.crm_type to decide which module to use. If crm_type is 'activecampaign', it calls etl_activecampaign. If 'hubspot', etl_hubspot. If absent and hubspot_refresh_token exists, falls back to hubspot for legacy clients."
+        },
+        {
+          "id": "inv_incremental_email",
+          "name": "Email events are pulled incrementally",
+          "description": "Each ETL run stores its completion timestamp. The next run only pulls email events newer than the last successful run. First run caps at 5000 most recent events to avoid pulling entire history."
+        }
+      ],
+      "entities": [
+        {
+          "id": "contact",
+          "name": "Contact",
+          "description": "An identified person from the CRM. Contacts are the join key between website behavior (events) and CRM data (deals, emails). Email is the primary identifier that links a contact across platforms.",
+          "key_fields": [
+            "contact_id - internal identifier",
+            "email - primary join key across all systems",
+            "crm_source - which platform this record came from",
+            "hubspot_contact_id, ac_contact_id - platform-specific foreign keys",
+            "first_touch_source/medium/campaign - attribution from first website visit",
+            "last_touch_source/medium/campaign - attribution from most recent visit"
+          ]
+        },
+        {
+          "id": "deal",
+          "name": "Deal",
+          "description": "A sales opportunity from the CRM. Deals connect to contacts, so you can trace: which ad brought the lead, what emails they engaged with, and how much revenue the deal generated.",
+          "key_fields": [
+            "deal_id - internal identifier",
+            "amount - deal value in dollars",
+            "stage - current pipeline stage",
+            "close_won - boolean, did the deal close successfully",
+            "crm_source - which platform (hubspot, activecampaign)"
+          ]
+        },
+        {
+          "id": "email_event",
+          "name": "Email Event",
+          "description": "An email interaction - sent, opened, clicked, bounced, replied, subscribed, or unsubscribed. Links to contacts by email address and optionally to automations.",
+          "key_fields": [
+            "event_type - sent, open, click, bounce, reply, subscribe, unsubscribe",
+            "contact_email - join key to contacts table",
+            "campaign_id - which email campaign",
+            "automation_id - which automation triggered this (if any)",
+            "crm_source - which platform"
+          ]
+        },
+        {
+          "id": "automation",
+          "name": "Automation",
+          "description": "An email automation sequence definition - its name, status, and how many contacts have entered/completed it.",
+          "key_fields": [
+            "automation_id - platform identifier",
+            "name - automation name",
+            "status - active, inactive, draft",
+            "entered_count, completed_count - throughput metrics"
+          ]
+        }
+      ],
+      "functions": [
+        {
+          "id": "crm_sync.etl_runner",
+          "name": "ETL Runner",
+          "description": "The main ETL orchestrator. Iterates over all tracked clients, checks their crm_type, and dispatches to the appropriate platform module. Logs each ETL run (start time, completion, row counts, errors) to the etl_runs table for monitoring and incremental pulls.",
+          "source": "dwa/src/track/etl.rs::run_all"
+        },
+        {
+          "id": "crm_sync.etl_activecampaign",
+          "name": "Active Campaign ETL",
+          "description": "Pulls contacts, deals (if CRM feature enabled), email events (incremental, capped at 5000), automations, and automation contacts from Active Campaign's API v3. Maps AC field names to unified schema (e.g., AC status '1' = 'active', value in cents / 100 = dollars, stage ID resolved via dealStages endpoint).",
+          "source": "dwa/src/track/etl.rs::etl_activecampaign, dwa/src/track/activecampaign.rs"
+        },
+        {
+          "id": "crm_sync.etl_hubspot",
+          "name": "HubSpot ETL",
+          "description": "Pulls contacts, deals, and deal-contact associations from HubSpot's CRM v3 API. Uses OAuth refresh token flow for authentication. Maps HubSpot properties to unified schema.",
+          "source": "dwa/src/track/etl.rs::etl_hubspot, dwa/src/track/hubspot.rs"
+        }
+      ],
+      "children": [
+        {
+          "id": "activecampaign",
+          "name": "Active Campaign",
+          "intent": "Pull contacts, email engagement, deals, and automation data from Active Campaign accounts.",
+          "description": "Authenticates via API key (Api-Token header). Each client's AC credentials are stored in keymaster as AC_API_KEY_{SLUG} and AC_API_URL_{SLUG}. Supports paginated pulls of contacts, deals, deal stages, activities (email events), automations, and automation contacts. The connect flow validates credentials by hitting the contacts endpoint (accounts endpoint requires a higher AC plan tier).",
+          "limitations": [
+            "Activities endpoint doesn't support date filtering - pulls all activities and filters client-side",
+            "Deals/CRM feature requires AC plan upgrade - gracefully skipped if not available",
+            "Automation contacts endpoint returns 404 for some automation types",
+            "Deal values stored in cents, not dollars - conversion handled in ETL mapping"
+          ]
+        },
+        {
+          "id": "hubspot",
+          "name": "HubSpot",
+          "intent": "Pull contacts, deals, and deal-contact associations from HubSpot CRM.",
+          "description": "Authenticates via OAuth 2.0 (authorization code flow with refresh tokens). Pulls contacts with attribution properties (source, source_data_1, source_data_2), deals with pipeline/stage info, and deal-contact many-to-many associations. Supports pagination via cursor-based 'after' parameter.",
+          "limitations": [
+            "OAuth requires a HubSpot developer app with redirect URL configured",
+            "Refresh tokens can expire if not used regularly - needs periodic ETL runs to keep alive"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ad_platform_sync",
+      "name": "Ad Platform Sync",
+      "intent": "Pulls daily ad spend, impressions, clicks, and conversions from Google Ads and Meta into BigQuery.",
+      "description": "Separate from CRM sync - runs for clients that have ad accounts connected. Writes to the ad_spend table with platform, campaign, ad group, and daily metrics. This data lets you calculate true ROAS by joining ad spend with actual closed deals from the CRM.",
+      "why": "Each ad platform reports its own conversions, but they double-count when a user clicks both a Google ad and a Facebook ad before converting. By pulling raw spend data and joining it with our own first-party conversion data, we get honest ROAS numbers.",
+      "who": "Will uses this for client reporting and campaign optimization decisions.",
+      "limitations": [
+        "Google Ads requires MCC-level access with a developer token - one-time setup per agency",
+        "Meta spend pull requires the ad account ID, which must be stored per client",
+        "No automated conversion upload back to platforms yet - could close the loop by sending Ground Truth conversions to Google Ads offline conversions"
+      ],
+      "entities": [
+        {
+          "id": "ad_spend",
+          "name": "Ad Spend",
+          "description": "Daily ad spend broken down by platform, campaign, and ad group. One row per campaign-day combination.",
+          "key_fields": [
+            "date - reporting date",
+            "platform - google_ads, meta",
+            "campaign_id, campaign_name - which campaign",
+            "spend - dollars spent",
+            "impressions, clicks, conversions - platform-reported metrics"
+          ]
+        }
+      ],
+      "children": [
+        {
+          "id": "google_ads",
+          "name": "Google Ads",
+          "intent": "Pull ad spend and validate conversion actions for Google Ads accounts.",
+          "description": "Uses OAuth with MCC (Manager Account) access. Validates customer IDs, searches for Import-type conversion actions (for offline conversion upload), and pulls spend data via the Google Ads Query Language (GAQL). Cost is returned in micros (divided by 1,000,000 for dollars).",
+          "limitations": [
+            "Developer token required - takes time to get approved by Google",
+            "Offline conversion upload not yet implemented"
+          ]
+        },
+        {
+          "id": "meta_ads",
+          "name": "Meta (Facebook) Ads",
+          "intent": "Pull ad spend and validate Conversions API (CAPI) setup for Meta ad accounts.",
+          "description": "Uses a system user access token stored in keymaster. Validates pixel IDs, sends test events to verify CAPI connectivity, and pulls spend from the Insights API at the adset level with daily time increment.",
+          "limitations": [
+            "Ad account ID must be configured per client (not stored in client config yet, uses META_AD_ACCOUNT_{SLUG} env workaround)",
+            "Event Match Quality check exists but isn't fully wired up"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "setup_cli",
+      "name": "Setup CLI",
+      "intent": "The 'dwa track' command set that provisions, configures, and verifies Ground Truth tracking for each client.",
+      "description": "A sequence of CLI commands that walk through client onboarding: create BigQuery dataset and tables, connect CRM platform, connect ad accounts, set up first-party proxy, deploy tracking script via GTM, and run end-to-end verification. Each step is idempotent (safe to re-run) and marks its completion in the setup_steps table.",
+      "why": "Client onboarding touches 5+ external systems (BigQuery, CRM, GTM, ad platforms, Cloudflare). The CLI codifies the exact steps so setup is repeatable and nothing gets missed. It also makes it possible for Claude Code to handle the entire onboarding autonomously.",
+      "who": "Will (or Claude Code) runs these commands when onboarding a new client.",
+      "limitations": [
+        "Google Tag Manager container snippet must still be manually installed on the client's WordPress site",
+        "Some setup steps require browser-based OAuth flows that can't be fully automated from CLI"
+      ],
+      "functions": [
+        {
+          "id": "setup_cli.init_bigquery",
+          "name": "init-bigquery",
+          "description": "Creates the BigQuery dataset (gt_{slug}) and all 10 tables using the service account. Registers the client in the local SQLite config database.",
+          "source": "dwa/src/track/bigquery.rs::init_bigquery"
+        },
+        {
+          "id": "setup_cli.connect_crm",
+          "name": "connect-active-campaign / connect-hubspot",
+          "description": "Validates CRM credentials and stores them in the client config. For AC: checks API key against the contacts endpoint. For HubSpot: generates OAuth URL and stores refresh token.",
+          "source": "dwa/src/track/activecampaign.rs::connect, dwa/src/track/hubspot.rs::connect"
+        },
+        {
+          "id": "setup_cli.connect_ads",
+          "name": "connect-google-ads / connect-meta",
+          "description": "Validates ad platform access and stores configuration. Google Ads: validates customer ID and searches for Import-type conversion actions. Meta: validates pixel ID and sends a test CAPI event.",
+          "source": "dwa/src/track/google_ads.rs::connect, dwa/src/track/meta.rs::connect"
+        },
+        {
+          "id": "setup_cli.generate_tag",
+          "name": "generate-tag",
+          "description": "Generates the JavaScript tracking script configured for the client (write key, form selectors, high-intent pages). Saves to ~/.dwa/tags/{slug}.html. Deployed to the client's GTM container as a Custom HTML tag.",
+          "source": "dwa/src/track/tag_gen.rs::generate_tag_for_client"
+        },
+        {
+          "id": "setup_cli.verify",
+          "name": "verify",
+          "description": "Runs end-to-end verification: checks if events are flowing (24h count), identity resolution is working, UTM persistence rate, BigQuery dataset state, CRM sync health, and ad platform configuration. Updates client status to healthy/degraded.",
+          "source": "dwa/src/track/verify.rs::verify"
+        },
+        {
+          "id": "setup_cli.etl_run",
+          "name": "etl-run",
+          "description": "Triggers a full ETL cycle for one or all clients. Pulls CRM data and ad spend into BigQuery. Logs run stats (duration, row counts, errors) to etl_runs table.",
+          "source": "dwa/src/track/etl.rs::run_all"
+        }
+      ]
+    },
+    {
+      "id": "bigquery",
+      "name": "BigQuery (Data Warehouse)",
+      "intent": "The central data store where all tracking data lives. One dataset per client, unified schema across all platforms.",
+      "description": "Each client gets a BigQuery dataset named gt_{slug} with 10 tables. The service account (crm-directory-sync@digital-will-369819.iam.gserviceaccount.com) has dataEditor and user roles on the project. Data flows in from three sources: the event ingestion endpoint (website events), CRM sync (contacts, deals, emails, automations), and ad platform sync (spend). All queries and dashboards read from these tables.",
+      "why": "BigQuery is the single source of truth. Every question about attribution, performance, or client health is answered by querying BigQuery. Having all data in one place means you can join website visits with CRM deals with ad spend in a single SQL query.",
+      "who": "Will queries BigQuery directly and builds Looker Studio dashboards for client reporting.",
+      "limitations": [
+        "Streaming inserts have a small delay (seconds) before data is queryable",
+        "BigQuery streaming insert quota is 100,000 rows per second per table - not a concern at current scale",
+        "No automated dashboard creation yet - dashboards are manually cloned from a template"
+      ],
+      "entities": [
+        {
+          "id": "bq_tables",
+          "name": "BigQuery Table Schema",
+          "description": "10 tables per client dataset: events, contacts, identity_graph, deals, deal_contacts, deal_stage_history, ad_spend, email_events, automations, automation_contacts. Schemas defined in dwa/src/track/schema.rs.",
+          "key_fields": [
+            "events - every website interaction (page views, form submissions)",
+            "contacts - identified people from CRM with attribution data",
+            "identity_graph - anonymous visitor ID to contact mapping",
+            "deals - sales opportunities from CRM",
+            "email_events - email opens, clicks, bounces from CRM",
+            "automations - email automation definitions",
+            "ad_spend - daily spend by platform/campaign"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "auth",
+      "name": "Authentication & Secrets",
+      "intent": "Manages credentials for all external platform integrations.",
+      "description": "Three auth patterns are used across the system: (1) Google service account JWT for BigQuery, GTM, and delegated Google Workspace access. (2) API key auth for Active Campaign (Api-Token header) and Meta (access_token parameter). (3) OAuth refresh token flow for HubSpot and Google Ads. All secrets are stored in keymaster and retrieved at runtime via the keymaster CLI.",
+      "invariants": [
+        {
+          "id": "inv_keymaster_only",
+          "name": "All secrets via keymaster",
+          "description": "No .env files, no hardcoded credentials, no config files with secrets. Everything goes through 'keymaster secret get <NAME>'. Client-specific secrets use the pattern PLATFORM_KEY_CLIENTSLUG (e.g., AC_API_KEY_DREW)."
+        },
+        {
+          "id": "inv_service_account_delegation",
+          "name": "Service account for Google APIs",
+          "description": "The service account crm-directory-sync@digital-will-369819.iam.gserviceaccount.com uses domain-wide delegation to impersonate will@digitalwillads.com for GTM, Gmail, and Calendar. JWT is built with the 'sub' claim set to the impersonated user."
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "from": "event_ingestion.tracking_script",
+      "to": "event_ingestion.ingest_endpoint",
+      "description": "The tracking script POSTs event payloads to the ingestion endpoint on every page view and form submission."
+    },
+    {
+      "from": "event_ingestion.ingest_endpoint",
+      "to": "bigquery",
+      "description": "The ingestion endpoint does a BigQuery streaming insert for each event. Events land in the client's gt_{slug}.events table within seconds."
+    },
+    {
+      "from": "crm_sync.etl_runner",
+      "to": "bigquery",
+      "description": "The ETL runner writes CRM data (contacts, deals, email events, automations) into the client's BigQuery dataset via streaming inserts."
+    },
+    {
+      "from": "ad_platform_sync",
+      "to": "bigquery",
+      "description": "Ad spend data from Google Ads and Meta is written to the ad_spend table in BigQuery."
+    },
+    {
+      "from": "setup_cli.generate_tag",
+      "to": "gtm",
+      "description": "The generate-tag command creates the tracking script and deploys it to the client's GTM container via the GTM API."
+    },
+    {
+      "from": "gtm",
+      "to": "event_ingestion.tracking_script",
+      "description": "GTM loads the tracking script on every page of the client's website."
+    },
+    {
+      "from": "event_ingestion.tracking_script",
+      "to": "crm_sync",
+      "description": "When a form is submitted, the tracking script captures the email. This same email is the join key used to link website events to CRM contacts."
+    }
+  ]
+}

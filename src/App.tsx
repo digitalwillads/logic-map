@@ -7,7 +7,9 @@ function App() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/data/comm-chat.json")
+    const params = new URLSearchParams(window.location.search);
+    const project = params.get("project") || "comm-chat";
+    fetch(`/data/${project}.json`)
       .then((res) => {
         if (!res.ok) throw new Error(`Failed to load logic map: ${res.status}`);
         return res.json();

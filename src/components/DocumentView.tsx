@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import type { LogicMap, System } from "../types/logic-map";
 import { ChatMockup, EmailTriageMockup, MeetingReviewMockup } from "./mockups";
+import { CodeView, type CodeAnnotation } from "./CodeView";
+import { emailTriagePipeline, emailTriagePolling } from "../data/code-annotations";
 import "./document.css";
 
 // Map function/system IDs to their UI mockups
@@ -10,6 +12,14 @@ const mockupMap: Record<string, () => JSX.Element> = {
   "meeting_review.ui": MeetingReviewMockup,
 };
 
+// Map system IDs to their annotated code files
+const codeMap: Record<string, { label: string; annotation: CodeAnnotation }[]> = {
+  "email_triage": [
+    { label: "pipeline.rs - Email processing pipeline", annotation: emailTriagePipeline },
+    { label: "polling.rs - Background polling loop", annotation: emailTriagePolling },
+  ],
+};
+
 interface DocumentViewProps {
   logicMap: LogicMap;
 }
@@ -17,6 +27,7 @@ interface DocumentViewProps {
 export function DocumentView({ logicMap }: DocumentViewProps) {
   // Nav state: which page are we on?
   const [activePage, setActivePage] = useState<string>("overview");
+  const [activeCode, setActiveCode] = useState<CodeAnnotation | null>(null);
   const contentRef = useRef<HTMLElement>(null);
 
   // Scroll content to top when page changes
@@ -121,8 +132,14 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
       </nav>
 
       {/* Page content */}
-      <main className="doc-content" key={activePage} ref={contentRef}>
-        {activePage === "overview" ? (
+      <main className="doc-content" key={activeCode ? "code" : activePage} ref={contentRef}>
+        {activeCode ? (
+          <CodeView
+            annotations={activeCode}
+            onBack={() => setActiveCode(null)}
+            backLabel={activeSystem?.name || "Back"}
+          />
+        ) : activePage === "overview" ? (
           <OverviewPage logicMap={logicMap} onNavigate={setActivePage} />
         ) : activePage === "automation_overview" ? (
           <AutomationOverviewPage
@@ -137,6 +154,7 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
             parent={parentSystem}
             relationships={relatedEdges}
             onNavigate={setActivePage}
+            onViewCode={setActiveCode}
           />
         ) : (
           <div className="doc-empty">Select a system from the left.</div>
@@ -341,15 +359,18 @@ function SystemPage({
   parent,
   relationships,
   onNavigate,
+  onViewCode,
 }: {
   system: System;
   parent: System | null;
   relationships: { from: string; to: string; description: string }[];
   onNavigate: (id: string) => void;
+  onViewCode: (annotation: CodeAnnotation) => void;
 }) {
   const hasInvariants = system.invariants && system.invariants.length > 0;
   const hasEntities = system.entities && system.entities.length > 0;
   const hasChildren = system.children && system.children.length > 0;
+  const codeFiles = codeMap[system.id];
 
   return (
     <>
@@ -482,6 +503,22 @@ function SystemPage({
               </a>
             ))}
           </div>
+        </section>
+      )}
+
+      {codeFiles && codeFiles.length > 0 && (
+        <section className="code-links-section">
+          <h3 className="section-heading">Source Code</h3>
+          {codeFiles.map((cf, i) => (
+            <a
+              key={i}
+              className="code-link"
+              onClick={() => onViewCode(cf.annotation)}
+            >
+              <span className="code-link-icon">{"</>"}</span>
+              <span>{cf.label}</span>
+            </a>
+          ))}
         </section>
       )}
     </>

@@ -1,0 +1,90 @@
+.code-view {
+  padding: 48px 48px 120px;
+  max-width: 100%;
+  overflow-y: auto;
+  height: 100vh;
+}
+
+.code-header {
+  margin-bottom: 32px;
+}
+
+.code-back {
+  font-size: 13px;
+  color: #3b82f6;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+  margin-bottom: 12px;
+}
+
+.code-back:hover {
+  text-decoration: underline;
+}
+
+.code-view h1 {
+  font-size: 20px;
+  font-weight: 600;
+  color: #111827;
+  margin: 0;
+  font-family: "SF Mono", "Fira Code", monospace;
+}
+
+.code-section {
+  margin-bottom: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.code-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 10px 16px;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.code-columns {
+  display: flex;
+}
+
+.code-left {
+  flex: 1;
+  min-width: 0;
+  background: #1e293b;
+  overflow-x: auto;
+}
+
+.code-left pre {
+  margin: 0;
+  padding: 16px;
+  font-size: 12px;
+  line-height: 1.6;
+  font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+  color: #e2e8f0;
+  white-space: pre;
+  tab-size: 4;
+}
+
+.code-left code {
+  font-family: inherit;
+}
+
+.code-right {
+  width: 340px;
+  flex-shrink: 0;
+  padding: 16px 20px;
+  background: #f9fafb;
+  border-left: 1px solid #e5e7eb;
+}
+
+.code-right p {
+  font-size: 13px;
+  color: #374151;
+  line-height: 1.7;
+  margin: 0;
+}
