@@ -239,6 +239,30 @@
   margin: 0 0 16px 0;
 }
 
+/* ---- In-system invariants & entities ---- */
+.doc-system-invariants,
+.doc-system-entities {
+  margin-bottom: 16px;
+}
+
+.doc-system-invariants h5,
+.doc-system-entities h5 {
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0 0 8px 0;
+}
+
+.doc-system-invariants .doc-invariant {
+  margin-bottom: 8px;
+}
+
+.doc-system-entities .doc-entities {
+  grid-template-columns: 1fr;
+}
+
 /* ---- Relationships ---- */
 .doc-relationships {
   margin-bottom: 16px;

@@ -1,4 +1,5 @@
-import type { LogicMap } from "../types/logic-map";
+import { useMemo } from "react";
+import type { LogicMap, Invariant, Entity } from "../types/logic-map";
 import "./sidebar.css";
 
 interface SidebarProps {
@@ -16,6 +17,33 @@ export function Sidebar({
   activeTab,
   onTabChange,
 }: SidebarProps) {
+  // Aggregate from top-level + all systems
+  const allInvariants = useMemo(() => {
+    const result: { systemName: string; inv: Invariant }[] = [];
+    for (const inv of logicMap.invariants) {
+      result.push({ systemName: "Global", inv });
+    }
+    for (const system of logicMap.systems) {
+      for (const inv of system.invariants || []) {
+        result.push({ systemName: system.name, inv });
+      }
+    }
+    return result;
+  }, [logicMap]);
+
+  const allEntities = useMemo(() => {
+    const result: { systemName: string; entity: Entity }[] = [];
+    for (const entity of logicMap.entities) {
+      result.push({ systemName: "Global", entity });
+    }
+    for (const system of logicMap.systems) {
+      for (const entity of system.entities || []) {
+        result.push({ systemName: system.name, entity });
+      }
+    }
+    return result;
+  }, [logicMap]);
+
   return (
     <div className={`sidebar ${isOpen ? "open" : "closed"}`}>
       <button className="sidebar-toggle" onClick={onToggle}>
@@ -39,15 +67,16 @@ export function Sidebar({
               className={`tab ${activeTab === "invariants" ? "active" : ""}`}
               onClick={() => onTabChange("invariants")}
             >
-              Invariants
+              Rules
             </button>
           </div>
 
           <div className="sidebar-content">
             {activeTab === "entities" && (
               <div className="panel-list">
-                {logicMap.entities.map((entity) => (
+                {allEntities.map(({ systemName, entity }) => (
                   <div key={entity.id} className="panel-card">
+                    <span className="panel-system-tag">{systemName}</span>
                     <h3>{entity.name}</h3>
                     <p className="panel-description">{entity.description}</p>
                     <ul className="field-list">
@@ -62,8 +91,9 @@ export function Sidebar({
 
             {activeTab === "invariants" && (
               <div className="panel-list">
-                {logicMap.invariants.map((inv) => (
+                {allInvariants.map(({ systemName, inv }) => (
                   <div key={inv.id} className="panel-card">
+                    <span className="panel-system-tag">{systemName}</span>
                     <h3>{inv.name}</h3>
                     <p className="panel-description">{inv.description}</p>
                   </div>

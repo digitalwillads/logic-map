@@ -28,6 +28,8 @@ export interface System {
   description: string;
   uncertain?: boolean;
   uncertainty_note?: string;
+  invariants?: Invariant[];
+  entities?: Entity[];
   functions: FunctionNode[];
 }
 

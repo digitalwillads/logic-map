@@ -1,119 +1,49 @@
 {
   "project": "comm-chat",
   "version": "2026-04-12",
-  "intent": "A full-stack AI advisor for Digital Will agency that gives Claude access to email, calendar, tasks, meeting recordings, and Google Ads through a unified chat interface. Team members chat with Claude and it can take actions on their behalf across all connected services.",
-  "invariants": [
-    {
-      "id": "inv_google_auth",
-      "name": "Google OAuth is the only auth method",
-      "description": "There is no password login. Every user authenticates through Google OAuth with their @digitalwillads.com account. If a user isn't logged in through Google, they can't use the system at all."
-    },
-    {
-      "id": "inv_timezone",
-      "name": "All date logic uses the user's local timezone",
-      "description": "The user's local time and IANA timezone (e.g. America/New_York) are sent with every chat request. All date calculations, calendar queries, and time-related tool calls use the user's timezone, not the server's. This prevents off-by-one day errors when the server is in a different timezone."
-    },
-    {
-      "id": "inv_timestamps_utc",
-      "name": "All stored timestamps are UTC ISO 8601",
-      "description": "Every timestamp in the database is stored as a UTC ISO 8601 string (e.g. '2026-04-12 14:30:00'). Timezone conversion happens at the API boundary, not in storage."
-    },
-    {
-      "id": "inv_email_confirmation",
-      "name": "Email sends always require explicit user confirmation",
-      "description": "Claude must draft the email in chat, show the recipients, subject, and body to the user, and wait for explicit approval before sending. The user_confirmed flag can only be set by Claude after the user says yes. This prevents accidental email sends."
-    },
-    {
-      "id": "inv_token_refresh",
-      "name": "OAuth tokens are refreshed proactively before every API call",
-      "description": "Before making any Gmail, Calendar, or other Google API call, the system refreshes the access token proactively. If the refresh fails, it falls back to the cached token. There is no retry-on-401 logic - the refresh happens before the call, not after a failure."
-    },
-    {
-      "id": "inv_admin_delegation",
-      "name": "Admin users can access other team members' data",
-      "description": "Users with is_admin=true can search other team members' Gmail, Calendar, and see all meeting recordings. Non-admin users can only access their own data. Admin status is detected via Google Directory API on login (best-effort - failures don't block login)."
-    },
-    {
-      "id": "inv_tool_messages_ephemeral",
-      "name": "Tool calls and results are not persisted to the database",
-      "description": "Only the final user messages and assistant text responses are saved to chat_messages. The intermediate tool calls and tool results exist only in memory during the request. When loading chat history for a continued conversation, tool context is lost."
-    },
-    {
-      "id": "inv_output_truncation",
-      "name": "Tool output is truncated at 256KB",
-      "description": "Any tool result longer than 256KB is truncated to prevent memory issues and to stay within Claude's context limits. This affects long email searches and large transcript fetches."
-    }
-  ],
-  "entities": [
-    {
-      "id": "user",
-      "name": "User",
-      "description": "A person who uses the chat interface. Has a Google account, authenticates via OAuth, and owns chat threads. Can be an admin (detected via Google Directory API) which grants access to other team members' data.",
-      "key_fields": [
-        "google_sub - Google's unique user identifier, used as the primary key for upserts",
-        "email - their @digitalwillads.com email address",
-        "name - display name from Google profile",
-        "picture_url - Google profile photo URL (nullable)",
-        "is_admin - whether they have admin privileges (0 or 1, detected on login)"
-      ]
-    },
-    {
-      "id": "auth_token",
-      "name": "Auth Token",
-      "description": "A session token stored in the user's browser localStorage. Created on login, used to authenticate every chat request. Has no server-side expiration - the app controls when to forget it.",
-      "key_fields": [
-        "token - UUID string, unique per session",
-        "user_id - which user this session belongs to",
-        "expires_at - nullable, not enforced server-side"
-      ]
-    },
-    {
-      "id": "google_tokens",
-      "name": "Google Tokens",
-      "description": "OAuth credentials for a user's Google account. One record per user (unique on user_id). Contains both the short-lived access token and the long-lived refresh token. Scopes track what permissions the user has granted.",
-      "key_fields": [
-        "access_token - short-lived token for Google API calls, refreshed proactively",
-        "refresh_token - long-lived token used to get new access tokens, never expires if offline access was granted",
-        "scopes - space-separated string of granted OAuth scopes (e.g. 'gmail.readonly gmail.send calendar.readonly')",
-        "token_expiry - nullable, not enforced (refresh happens proactively, not on expiry)"
-      ]
-    },
-    {
-      "id": "chat_thread",
-      "name": "Chat Thread",
-      "description": "A conversation between a user and Claude. Has a title (default 'New Chat') and contains ordered messages. The updated_at timestamp changes whenever a new message is added, so threads sort by most recent activity.",
-      "key_fields": [
-        "user_id - who owns this thread",
-        "title - display name, defaults to 'New Chat', can be renamed",
-        "updated_at - changes on every message, used for sorting"
-      ]
-    },
-    {
-      "id": "chat_message",
-      "name": "Chat Message",
-      "description": "A single message in a chat thread. Stores the role (user or assistant) and the text content. Tool calls and their results are NOT stored here - only the final text that the user sees.",
-      "key_fields": [
-        "thread_id - which thread this belongs to (cascade deletes if thread is deleted)",
-        "role - 'user' or 'assistant'",
-        "content - the full text of the message"
-      ]
-    },
-    {
-      "id": "chad_ads_token",
-      "name": "Chad Ads Token",
-      "description": "OAuth credentials for a user's Google Ads account, obtained through the Chad Ads integration. One record per user. Stores the user token and optionally a selected customer (ad account) ID.",
-      "key_fields": [
-        "user_token - OAuth token for Chad Ads API",
-        "customer_id - nullable, the selected Google Ads customer account ID"
-      ]
-    }
-  ],
+  "intent": "A full-stack AI advisor and triage platform for Digital Will agency. Gives Claude access to email, calendar, tasks, meeting recordings, Google Ads, and Stripe through a unified chat interface. Background pipelines automatically process incoming emails and meeting recordings, extract action items, and present them for human review through tabbed Email and Meeting triage views.",
+  "invariants": [],
+  "entities": [],
   "systems": [
     {
       "id": "chat_engine",
       "name": "Chat Engine",
       "intent": "The core intelligence loop that connects users to Claude with tool access. Takes a user message, gives Claude the ability to call 30+ tools across email, calendar, recordings, and ads, then streams the response back.",
       "description": "Receives chat requests via SSE, runs a loop of Claude reasoning and tool execution (up to 50 iterations), and streams text, tool calls, and tool results back to the frontend in real-time.",
+      "invariants": [
+        {
+          "id": "inv_output_truncation",
+          "name": "Tool output is truncated at 256KB",
+          "description": "Any tool result longer than 256KB is truncated to prevent memory issues and to stay within Claude's context limits. This affects long email searches and large transcript fetches."
+        },
+        {
+          "id": "inv_tool_messages_ephemeral",
+          "name": "Tool calls and results are not persisted to the database",
+          "description": "Only the final user messages and assistant text responses are saved to chat_messages. The intermediate tool calls and tool results exist only in memory during the request. When loading chat history for a continued conversation, tool context is lost."
+        }
+      ],
+      "entities": [
+        {
+          "id": "chat_thread",
+          "name": "ChatThread",
+          "description": "A conversation between a user and Claude. Has a title (default 'New Chat') and contains ordered messages. The updated_at timestamp changes whenever a new message is added, so threads sort by most recent activity.",
+          "key_fields": [
+            "user_id - who owns this thread",
+            "title - display name, defaults to 'New Chat', can be renamed",
+            "updated_at - changes on every message, used for sorting"
+          ]
+        },
+        {
+          "id": "chat_message",
+          "name": "ChatMessage",
+          "description": "A single message in a chat thread. Stores the role (user or assistant) and the text content. Tool calls and their results are NOT stored here - only the final text that the user sees.",
+          "key_fields": [
+            "thread_id - which thread this belongs to (cascade deletes if thread is deleted)",
+            "role - 'user' or 'assistant'",
+            "content - the full text of the message"
+          ]
+        }
+      ],
       "functions": [
         {
           "id": "chat_engine.chat_stream",
@@ -222,6 +152,53 @@
       "name": "Authentication",
       "intent": "Manages who can use the system and what permissions they have. Handles the entire Google OAuth lifecycle from initial login through token refresh and scope management.",
       "description": "Google OAuth flow with scope tracking, token refresh, admin detection, and session management. Users log in with Google, get a session token stored in localStorage, and their OAuth tokens are refreshed proactively before every API call.",
+      "invariants": [
+        {
+          "id": "inv_google_auth",
+          "name": "Google OAuth is the only auth method",
+          "description": "There is no password login. Every user authenticates through Google OAuth with their @digitalwillads.com account. If a user isn't logged in through Google, they can't use the system at all."
+        },
+        {
+          "id": "inv_admin_delegation",
+          "name": "Admin users can access other team members' data",
+          "description": "Users with is_admin=true can search other team members' Gmail, Calendar, and see all meeting recordings. Non-admin users can only access their own data. Admin status is detected via Google Directory API on login (best-effort - failures don't block login)."
+        }
+      ],
+      "entities": [
+        {
+          "id": "user",
+          "name": "User",
+          "description": "A person who uses the chat interface. Has a Google account, authenticates via OAuth, and owns chat threads. Can be an admin (detected via Google Directory API) which grants access to other team members' data.",
+          "key_fields": [
+            "google_sub - Google's unique user identifier, used as the primary key for upserts",
+            "email - their @digitalwillads.com email address",
+            "name - display name from Google profile",
+            "picture_url - Google profile photo URL (nullable)",
+            "is_admin - whether they have admin privileges (0 or 1, detected on login)"
+          ]
+        },
+        {
+          "id": "auth_token",
+          "name": "AuthToken",
+          "description": "A session token stored in the user's browser localStorage. Created on login, used to authenticate every chat request. Has no server-side expiration - the app controls when to forget it.",
+          "key_fields": [
+            "token - UUID string, unique per session",
+            "user_id - which user this session belongs to",
+            "expires_at - nullable, not enforced server-side"
+          ]
+        },
+        {
+          "id": "google_tokens",
+          "name": "GoogleTokens",
+          "description": "OAuth credentials for a user's Google account. One record per user (unique on user_id). Contains both the short-lived access token and the long-lived refresh token. Scopes track what permissions the user has granted.",
+          "key_fields": [
+            "access_token - short-lived token for Google API calls, refreshed proactively",
+            "refresh_token - long-lived token used to get new access tokens, never expires if offline access was granted",
+            "scopes - space-separated string of granted OAuth scopes (e.g. 'gmail.readonly gmail.send calendar.readonly')",
+            "token_expiry - nullable, not enforced (refresh happens proactively, not on expiry)"
+          ]
+        }
+      ],
       "functions": [
         {
           "id": "auth.login_flow",
@@ -294,6 +271,18 @@
       "name": "Gmail",
       "intent": "Lets Claude read and send email on behalf of the user. Searching, reading threads, composing new messages, replying, and saving drafts - all through natural language in chat.",
       "description": "Gmail API integration with full email lifecycle: search, read, send (with confirmation), reply, reply-all, and draft. Handles RFC 2822 message construction, multi-part MIME parsing, and Gmail deep link generation. Admin users can search other team members' inboxes via delegation.",
+      "invariants": [
+        {
+          "id": "inv_email_confirmation",
+          "name": "Email sends always require explicit user confirmation",
+          "description": "Claude must draft the email in chat, show the recipients, subject, and body to the user, and wait for explicit approval before sending. The user_confirmed flag can only be set by Claude after the user says yes. This prevents accidental email sends."
+        },
+        {
+          "id": "inv_token_refresh",
+          "name": "OAuth tokens are refreshed proactively before every API call",
+          "description": "Before making any Gmail, Calendar, or other Google API call, the system refreshes the access token proactively. If the refresh fails, it falls back to the cached token. There is no retry-on-401 logic - the refresh happens before the call, not after a failure."
+        }
+      ],
       "functions": [
         {
           "id": "gmail.search",
@@ -397,6 +386,13 @@
       "name": "Calendar",
       "intent": "Lets Claude look up the user's schedule, find events, check attendees, and answer questions about meetings. Read-only access to Google Calendar with timezone-aware date handling.",
       "description": "Google Calendar API integration for reading events across all of a user's calendars. Handles timezone conversion, multi-calendar aggregation, deduplication, and attendee details. Admin users can query other team members' calendars via delegation.",
+      "invariants": [
+        {
+          "id": "inv_timezone",
+          "name": "All date logic uses the user's local timezone",
+          "description": "The user's local time and IANA timezone (e.g. America/New_York) are sent with every chat request. All date calculations, calendar queries, and time-related tool calls use the user's timezone, not the server's. This prevents off-by-one day errors when the server is in a different timezone."
+        }
+      ],
       "functions": [
         {
           "id": "calendar.list_calendars",
@@ -510,6 +506,17 @@
       "name": "Chad Ads (Google Ads)",
       "intent": "Lets Claude interact with Google Ads accounts through a conversational interface. Users can check campaign performance, create campaigns, and manage ads by chatting naturally.",
       "description": "Integration with the Chad Ads API, which provides a chat-style interface to Google Ads. Multi-turn conversations are tracked per customer (ad account) ID. Supports both read operations (checking metrics) and write operations (creating campaigns, changing budgets) with safety checks for writes.",
+      "entities": [
+        {
+          "id": "chad_ads_token",
+          "name": "ChadAdsToken",
+          "description": "OAuth credentials for a user's Google Ads account, obtained through the Chad Ads integration. One record per user. Stores the user token and optionally a selected customer (ad account) ID.",
+          "key_fields": [
+            "user_token - OAuth token for Chad Ads API",
+            "customer_id - nullable, the selected Google Ads customer account ID"
+          ]
+        }
+      ],
       "functions": [
         {
           "id": "chad_ads.list_customers",
@@ -582,6 +589,13 @@
       "name": "Database",
       "intent": "Persists all application state - users, sessions, OAuth tokens, chat history, and integration credentials. The single source of truth for who's logged in, what they've said, and what services they've connected.",
       "description": "SQLite database accessed via Diesel ORM with R2D2 connection pooling. 6 tables covering users, auth tokens, Google tokens, chat threads, chat messages, and Chad Ads tokens. All timestamps are UTC ISO 8601 strings. Migrations run automatically on startup.",
+      "invariants": [
+        {
+          "id": "inv_timestamps_utc",
+          "name": "All stored timestamps are UTC ISO 8601",
+          "description": "Every timestamp in the database is stored as a UTC ISO 8601 string (e.g. '2026-04-12 14:30:00'). Timezone conversion happens at the API boundary, not in storage."
+        }
+      ],
       "functions": [
         {
           "id": "database.user_management",
@@ -625,6 +639,250 @@
           "name": "Auto-Migration on Startup",
           "description": "All pending database migrations run automatically when the server starts. The initial migration creates users, auth_tokens, google_tokens, chat_threads, and chat_messages. A second migration adds chad_ads_tokens.",
           "source": "src/database.rs",
+          "decisions": []
+        }
+      ]
+    },
+    {
+      "id": "email_triage",
+      "name": "Email Triage",
+      "intent": "Automatically processes incoming Gmail messages, filters noise using AI classification, generates summaries, and presents relevant emails for human triage through a dedicated UI tab.",
+      "invariants": [
+        {
+          "id": "inv_email_filtered",
+          "name": "Emails are filtered before users see them",
+          "description": "The pipeline applies user-defined filter rules (sender/domain/keyword blacklists) AND an AI classification step. Emails classified as noise (receipts, billing, newsletters, calendar invites, automated notifications) are filtered out. Only emails the AI classifies as 'KEEP' appear in the triage queue."
+        },
+        {
+          "id": "inv_email_polling_interval",
+          "name": "Email polling runs every 120 seconds",
+          "description": "A background task runs continuously, polling Gmail for all users with OAuth tokens. Each poll fetches new messages since the last known history ID."
+        }
+      ],
+      "entities": [
+        {
+          "id": "email_queue_item",
+          "name": "EmailQueueItem",
+          "description": "A single email that has been processed by the triage pipeline. Tracks whether it was filtered out, why, and includes an AI-generated summary for quick scanning.",
+          "key_fields": [
+            "gmail_message_id - Gmail's unique message identifier",
+            "gmail_thread_id - Gmail's thread identifier for grouping",
+            "user_id - which user this email belongs to",
+            "sender - email sender address",
+            "subject - email subject line",
+            "snippet - Gmail's preview snippet",
+            "status - queue status (pending, triaged, archived)",
+            "filtered_out - boolean, whether AI/rules filtered this email",
+            "filter_reason - why it was filtered (nullable)",
+            "ai_summary - 1-2 sentence AI-generated summary",
+            "raw_email_json - full email payload for chat context"
+          ]
+        },
+        {
+          "id": "email_filter_rule",
+          "name": "EmailFilterRule",
+          "description": "A user-defined rule for filtering emails before AI classification. Rules can match on sender, domain, or keywords.",
+          "key_fields": [
+            "user_id - which user owns this rule",
+            "rule_type - type of match (sender, domain, keyword)",
+            "value - the value to match against",
+            "action - what to do when matched (filter, keep)"
+          ]
+        },
+        {
+          "id": "email_webhook_state",
+          "name": "EmailWebhookState",
+          "description": "Tracks the polling state for each user's Gmail account. Stores the last history ID so we only fetch new messages on each poll.",
+          "key_fields": [
+            "user_id - which user this state belongs to",
+            "history_id - Gmail's history ID, used to fetch only new messages",
+            "watch_expiration - when the Gmail push notification watch expires (nullable)",
+            "last_poll_at - timestamp of the last successful poll"
+          ]
+        }
+      ],
+      "functions": [
+        {
+          "id": "email_triage.polling",
+          "name": "Email Polling Loop",
+          "description": "Runs every 120s, discovers all users with Google tokens, fetches new Gmail messages since last history ID, feeds each through the pipeline.",
+          "decisions": []
+        },
+        {
+          "id": "email_triage.pipeline",
+          "name": "Email Processing Pipeline",
+          "description": "Core processing: applies filter rules, calls Claude to classify (KEEP vs FILTER with reason), generates 1-2 sentence AI summary, enriches with calendar context (recent meetings with sender in last 30 days), stores result in email_queue.",
+          "decisions": [
+            {
+              "id": "email_triage.pipeline.ai_classification",
+              "name": "AI Classification",
+              "description": "Claude decides keep vs filter, filtering out receipts/billing/newsletters/calendar invites/automated emails/sales pitches."
+            },
+            {
+              "id": "email_triage.pipeline.calendar_enrichment",
+              "name": "Calendar Context Enrichment",
+              "description": "Looks back 30 days for meetings with the sender to give context about the relationship and recent interactions."
+            }
+          ]
+        },
+        {
+          "id": "email_triage.chat",
+          "name": "Email Chat Endpoint",
+          "description": "POST /api/email-chat. Lets the user have a conversation about a specific email. Claude has access to Gmail tools and can compose replies or drafts. Uses reply_to_email (not search) since the email ID is already known.",
+          "decisions": []
+        },
+        {
+          "id": "email_triage.ui",
+          "name": "Email Triage Card",
+          "description": "UI component in the Emails tab. Shows queue of pending emails with AI summaries. User can read full email, chat with Claude about it, then click 'Triage Now' to move to next. Auto-advances through queue.",
+          "decisions": []
+        }
+      ]
+    },
+    {
+      "id": "meeting_review",
+      "name": "Meeting Review",
+      "intent": "Processes meeting recordings, uses an AI agent ('Barbara Ann') to extract action items from transcripts, and presents meetings with their extracted tasks for human review and approval.",
+      "invariants": [
+        {
+          "id": "inv_meeting_polling_interval",
+          "name": "Meeting polling runs every 300 seconds",
+          "description": "A background task polls for new meeting recordings for all users with calendar access. Longer interval than email because meetings are less frequent."
+        },
+        {
+          "id": "inv_barbara_ann_context",
+          "name": "Barbara Ann extracts tasks with full context",
+          "description": "The AI agent that extracts tasks has access to all tools (email, calendar, recordings, tasks) so it can look up context about meeting participants and their recent communications before deciding what the action items are."
+        }
+      ],
+      "entities": [
+        {
+          "id": "meeting_queue_item",
+          "name": "MeetingQueueItem",
+          "description": "A meeting recording that has been processed by the review pipeline. Stores transcript and metadata for the review UI.",
+          "key_fields": [
+            "recording_id - unique identifier from the recording service",
+            "user_id - which user this meeting belongs to",
+            "meeting_name - title of the calendar event or recording",
+            "meeting_date - when the meeting occurred",
+            "duration_seconds - length of the recording",
+            "attendees_json - JSON array of attendee names and emails",
+            "transcript_text - full transcript with speaker labels",
+            "status - review status (pending, reviewed, archived)"
+          ]
+        },
+        {
+          "id": "meeting_draft_task",
+          "name": "MeetingDraftTask",
+          "description": "An action item extracted by Barbara Ann from a meeting transcript. Starts as a draft for human review, can be accepted (creating a Google Task) or rejected.",
+          "key_fields": [
+            "meeting_queue_id - which meeting this task was extracted from",
+            "title - description of the action item",
+            "suggested_assignee - who Barbara Ann thinks should do this",
+            "assignee_email - email address of the suggested assignee",
+            "status - draft, accepted, rejected",
+            "google_task_id - ID of the created Google Task (nullable, set on accept)",
+            "google_tasklist_id - which task list it was created in (nullable)"
+          ]
+        }
+      ],
+      "functions": [
+        {
+          "id": "meeting_review.polling",
+          "name": "Meeting Polling Loop",
+          "description": "Runs every 300s, discovers users with calendar access, fetches new recordings from Recorder API, feeds each through the pipeline.",
+          "decisions": []
+        },
+        {
+          "id": "meeting_review.pipeline",
+          "name": "Meeting Processing Pipeline",
+          "description": "Fetches recording and transcript, calls Barbara Ann (Claude with full tool access) to analyze the transcript and extract action items. Barbara Ann can search emails and calendar for context about attendees. Returns JSON array of tasks with titles, suggested assignees, and assignee emails. Stores meeting + draft tasks in database.",
+          "decisions": [
+            {
+              "id": "meeting_review.pipeline.task_extraction",
+              "name": "Task Extraction Strategy",
+              "description": "Barbara Ann analyzes the full transcript with speaker labels, identifies actionable items, suggests assignees based on who was speaking and the discussion context."
+            },
+            {
+              "id": "meeting_review.pipeline.assignee_resolution",
+              "name": "Assignee Resolution",
+              "description": "Tries to match attendee names to email addresses using calendar event data and Google Directory."
+            }
+          ]
+        },
+        {
+          "id": "meeting_review.chat",
+          "name": "Meeting Chat Endpoint",
+          "description": "POST /api/meeting-chat. Conversation about a specific meeting. Claude has access to all tools plus the transcript context. Can help refine task descriptions or suggest additional tasks.",
+          "decisions": []
+        },
+        {
+          "id": "meeting_review.ui",
+          "name": "Meeting Review Card",
+          "description": "UI component in the Meetings tab. Shows meeting name, date, attendees, and auto-extracted draft tasks. Each task shows title and suggested assignee. User can accept (creates Google Task), reject, or refine tasks via chat. 'Done - Next Meeting' advances to next meeting.",
+          "decisions": []
+        }
+      ]
+    },
+    {
+      "id": "google_tasks",
+      "name": "Google Tasks",
+      "intent": "Lets Claude and the triage UI create, manage, and organize tasks in Google Tasks. Used both directly through chat and as the backend for meeting review task creation.",
+      "entities": [
+        {
+          "id": "google_task",
+          "name": "GoogleTask",
+          "description": "A task in Google Tasks. Represents an action item that can be created, updated, completed, or deleted through the API.",
+          "key_fields": [
+            "title - task description",
+            "notes - additional details or context",
+            "due_date - when the task is due (nullable)",
+            "status - needsAction or completed",
+            "parent_task - ID of parent task for subtasks (nullable)",
+            "task_list_id - which task list this belongs to"
+          ]
+        },
+        {
+          "id": "google_task_list",
+          "name": "GoogleTaskList",
+          "description": "A task list in Google Tasks. Contains multiple tasks and can be created, renamed, or deleted.",
+          "key_fields": [
+            "title - name of the task list",
+            "id - Google's unique identifier for the list"
+          ]
+        }
+      ],
+      "functions": [
+        {
+          "id": "google_tasks.client",
+          "name": "Tasks API Client",
+          "description": "HTTP client for Google Tasks API. Supports CRUD for both task lists and individual tasks. Handles pagination for large lists.",
+          "decisions": []
+        },
+        {
+          "id": "google_tasks.tools",
+          "name": "Tasks Chat Tools",
+          "description": "11 tool functions available to Claude: list/create/update/delete task lists, list/get/create/update/complete/delete/move tasks. Formats output with checkbox icons, due dates, and direct links. Admin variants allow managing other users' tasks.",
+          "decisions": []
+        }
+      ]
+    },
+    {
+      "id": "stripe",
+      "name": "Stripe",
+      "intent": "Admin-only tools for querying Stripe billing data. Lets Claude look up customers, subscriptions, invoices, charges, and disputes for financial reporting and client management.",
+      "invariants": [
+        {
+          "id": "inv_stripe_admin_only",
+          "name": "Stripe tools are admin-only",
+          "description": "All Stripe tools require is_admin=true. Non-admin users cannot access any billing data through chat."
+        }
+      ],
+      "functions": [
+        {
+          "id": "stripe.tools",
+          "name": "Stripe Chat Tools",
+          "description": "5 admin-only tool functions: list customers, list subscriptions, list invoices, list charges, list disputes. All support filtering by date range, customer, status. Human-readable formatting with currency conversion.",
           "decisions": []
         }
       ]
@@ -685,6 +943,41 @@
       "from": "chad_ads.connection_flow",
       "to": "database.token_storage",
       "description": "After Chad Ads OAuth callback, the user's Chad Ads token and selected customer ID are stored in the database"
+    },
+    {
+      "from": "email_triage.pipeline",
+      "to": "auth.token_refresh",
+      "description": "The email pipeline refreshes OAuth tokens before fetching Gmail messages for each user"
+    },
+    {
+      "from": "email_triage.pipeline",
+      "to": "calendar.get_events",
+      "description": "Pipeline enriches emails with calendar context by looking up recent meetings with the email sender"
+    },
+    {
+      "from": "email_triage.chat",
+      "to": "gmail.reply",
+      "description": "The email chat endpoint gives Claude access to reply tools so users can compose responses during triage"
+    },
+    {
+      "from": "meeting_review.pipeline",
+      "to": "recorder.get_transcript",
+      "description": "Pipeline fetches the full meeting transcript to pass to Barbara Ann for task extraction"
+    },
+    {
+      "from": "meeting_review.pipeline",
+      "to": "calendar.get_events",
+      "description": "Pipeline looks up calendar event details for attendee information"
+    },
+    {
+      "from": "meeting_review.ui",
+      "to": "google_tasks.client",
+      "description": "When users accept a draft task, the UI creates it in Google Tasks via the Tasks API"
+    },
+    {
+      "from": "meeting_review.chat",
+      "to": "google_tasks.tools",
+      "description": "The meeting chat endpoint gives Claude access to task management tools for creating and organizing extracted tasks"
     }
   ]
 }
