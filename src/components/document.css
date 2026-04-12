@@ -107,7 +107,11 @@
   flex: 1;
   overflow-y: auto;
   padding: 48px 72px 120px;
-  max-width: 900px;
+}
+
+/* Constrain text pages but let code view use full width */
+.doc-content:has(.code-view) {
+  padding: 0;
 }
 
 .doc-content::-webkit-scrollbar { width: 6px; }

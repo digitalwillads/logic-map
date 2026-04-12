@@ -59,33 +59,14 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
     | { type: "link"; id: string; label: string; indent: boolean; color: string };
 
   const navItems: NavItem[] = [];
+  const colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
 
-  // Chat Engine + its children
-  const chatEngine = logicMap.systems.find((s) => s.id === "chat_engine");
-  if (chatEngine) {
-    navItems.push({ type: "link", id: chatEngine.id, label: chatEngine.name, indent: false, color: "#3b82f6" });
-    for (const child of chatEngine.children || []) {
+  for (let i = 0; i < logicMap.systems.length; i++) {
+    const system = logicMap.systems[i];
+    const color = colors[i % colors.length];
+    navItems.push({ type: "link", id: system.id, label: system.name, indent: false, color });
+    for (const child of system.children || []) {
       navItems.push({ type: "link", id: child.id, label: child.name, indent: true, color: "#94a3b8" });
-    }
-  }
-
-  // Chat Automation Tabs
-  const automationIds = ["email_triage", "meeting_review"];
-  const automations = logicMap.systems.filter((s) => automationIds.includes(s.id));
-  if (automations.length > 0) {
-    navItems.push({ type: "link", id: "automation_overview", label: "Chat Automation Tabs", indent: false, color: "#10b981" });
-    for (const s of automations) {
-      navItems.push({ type: "link", id: s.id, label: s.name, indent: true, color: "#10b981" });
-    }
-  }
-
-  // System
-  const infraIds = ["auth", "database"];
-  const infra = logicMap.systems.filter((s) => infraIds.includes(s.id));
-  if (infra.length > 0) {
-    navItems.push({ type: "header", label: "System" });
-    for (const s of infra) {
-      navItems.push({ type: "link", id: s.id, label: s.name, indent: false, color: "#8b5cf6" });
     }
   }
 
