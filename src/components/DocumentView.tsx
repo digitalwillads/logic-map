@@ -62,9 +62,9 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
   const automationIds = ["email_triage", "meeting_review"];
   const automations = logicMap.systems.filter((s) => automationIds.includes(s.id));
   if (automations.length > 0) {
-    navItems.push({ type: "header", label: "Chat Automation Tabs" });
+    navItems.push({ type: "link", id: "automation_overview", label: "Chat Automation Tabs", indent: false, color: "#10b981" });
     for (const s of automations) {
-      navItems.push({ type: "link", id: s.id, label: s.name, indent: false, color: "#10b981" });
+      navItems.push({ type: "link", id: s.id, label: s.name, indent: true, color: "#10b981" });
     }
   }
 
@@ -124,6 +124,13 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
       <main className="doc-content" key={activePage} ref={contentRef}>
         {activePage === "overview" ? (
           <OverviewPage logicMap={logicMap} onNavigate={setActivePage} />
+        ) : activePage === "automation_overview" ? (
+          <AutomationOverviewPage
+            automations={logicMap.systems.filter((s) =>
+              ["email_triage", "meeting_review"].includes(s.id)
+            )}
+            onNavigate={setActivePage}
+          />
         ) : activeSystem ? (
           <SystemPage
             system={activeSystem}
@@ -136,6 +143,57 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
         )}
       </main>
     </div>
+  );
+}
+
+/* ---- Overview Page ---- */
+
+/* ---- Automation Overview Page ---- */
+
+function AutomationOverviewPage({
+  automations,
+  onNavigate,
+}: {
+  automations: System[];
+  onNavigate: (id: string) => void;
+}) {
+  return (
+    <>
+      <h1>Chat Automation Tabs</h1>
+      <p className="page-lead">
+        Dedicated UI tabs that extend the Chat Engine with proactive, automated workflows. Instead of waiting for a user to ask Claude a question, these tabs process data in the background and present it for human review.
+      </p>
+
+      <div className="context-block">
+        <div className="context-row">
+          <span className="context-label">How they relate to the Chat Engine</span>
+          <p>
+            Each automation tab reuses the Chat Engine's existing infrastructure - the same Claude API client, the same tool executor, the same Gmail/Calendar/Tasks integrations. They don't rebuild any of that. What they add is a background polling pipeline that fetches and processes data automatically, and a dedicated UI tab that presents the results for human review. The chat input inside each tab connects to the same Claude but with narrower context - it knows about the specific email or meeting being reviewed.
+          </p>
+        </div>
+        <div className="context-row">
+          <span className="context-label">Architecture pattern</span>
+          <p>
+            Every automation tab follows the same pattern: (1) a background polling task that runs on an interval, discovers new items, and processes them through an AI pipeline, (2) a database queue that stores processed items with their status, (3) a dedicated chat endpoint that gives Claude context about the specific item being reviewed, and (4) a UI card component that presents the queue and lets users take action. The polling will be replaced by webhooks once live.
+          </p>
+        </div>
+        <div className="context-row">
+          <span className="context-label">Why they're separate from the main chat</span>
+          <p>
+            The main chat is reactive - the user asks, Claude responds. These tabs are proactive - the system processes data before the user asks. Email Triage pre-sorts the inbox so the user reviews a filtered queue instead of raw email. Meeting Review pre-extracts action items so the user approves tasks instead of watching transcripts. Both save hours of manual work by doing the AI processing upfront.
+          </p>
+        </div>
+      </div>
+
+      <h3 className="section-heading" style={{ marginTop: 32, borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>Tabs</h3>
+      {automations.map((s) => (
+        <a key={s.id} className="overview-card" onClick={() => onNavigate(s.id)}>
+          <h4>{s.name}</h4>
+          <p>{s.intent}</p>
+          {s.why && <p className="overview-why">{s.why}</p>}
+        </a>
+      ))}
+    </>
   );
 }
 
