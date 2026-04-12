@@ -31,6 +31,7 @@ export interface System {
   invariants?: Invariant[];
   entities?: Entity[];
   functions: FunctionNode[];
+  children?: System[];
 }
 
 export interface FunctionNode {

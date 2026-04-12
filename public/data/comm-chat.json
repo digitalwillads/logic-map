@@ -145,6 +145,389 @@
             }
           ]
         }
+      ],
+      "children": [
+        {
+          "id": "gmail",
+          "name": "Gmail",
+          "intent": "Lets Claude read and send email on behalf of the user. Searching, reading threads, composing new messages, replying, and saving drafts - all through natural language in chat.",
+          "description": "Gmail API integration with full email lifecycle: search, read, send (with confirmation), reply, reply-all, and draft. Handles RFC 2822 message construction, multi-part MIME parsing, and Gmail deep link generation. Admin users can search other team members' inboxes via delegation.",
+          "invariants": [
+            {
+              "id": "inv_email_confirmation",
+              "name": "Email sends always require explicit user confirmation",
+              "description": "Claude must draft the email in chat, show the recipients, subject, and body to the user, and wait for explicit approval before sending. The user_confirmed flag can only be set by Claude after the user says yes. This prevents accidental email sends."
+            },
+            {
+              "id": "inv_token_refresh",
+              "name": "OAuth tokens are refreshed proactively before every API call",
+              "description": "Before making any Gmail, Calendar, or other Google API call, the system refreshes the access token proactively. If the refresh fails, it falls back to the cached token. There is no retry-on-401 logic - the refresh happens before the call, not after a failure."
+            }
+          ],
+          "functions": [
+            {
+              "id": "gmail.search",
+              "name": "Email Search",
+              "description": "Searches the user's Gmail using Gmail's native query syntax. Returns parsed emails with sender, subject, snippet, date, and thread ID. Supports pagination and sends progress updates every 10 emails for large searches.",
+              "source": "src/chat/tools/gmail.rs::search_emails",
+              "decisions": [
+                {
+                  "id": "gmail.search.progress_updates",
+                  "name": "Progress Every 10 Emails",
+                  "description": "During large searches, sends a tool_progress event to the frontend every 10 emails processed. This keeps the user informed during searches that might take 10-30 seconds.",
+                  "source": "src/chat/tools/gmail.rs"
+                },
+                {
+                  "id": "gmail.search.result_cap",
+                  "name": "500 Email Result Cap",
+                  "description": "Search results are capped at 500 emails. Combined with the 256KB output truncation, this prevents a broad search from overwhelming Claude's context window.",
+                  "source": "src/chat/tools/gmail.rs"
+                }
+              ]
+            },
+            {
+              "id": "gmail.read",
+              "name": "Email Reading",
+              "description": "Fetches a single email or an entire thread with full message bodies. Parses multi-part MIME to extract readable text, preferring text/plain over HTML. Generates Gmail deep links using the user's email as the authuser parameter so links open in the correct account.",
+              "source": "src/chat/tools/gmail.rs",
+              "decisions": [
+                {
+                  "id": "gmail.read.body_parsing",
+                  "name": "Text/Plain Preferred Over HTML",
+                  "description": "When parsing email bodies, prefers text/plain parts over HTML. Falls back to HTML if no plain text is available. This gives Claude clean text to work with instead of HTML markup.",
+                  "source": "src/gmail/client.rs"
+                },
+                {
+                  "id": "gmail.read.deep_links",
+                  "name": "Multi-Account Gmail Deep Links",
+                  "description": "Gmail links include ?authuser=EMAIL so they open in the correct Google account when the user has multiple accounts signed in. Format: https://mail.google.com/mail/?authuser=EMAIL#inbox/THREAD_ID",
+                  "source": "src/chat/tools/gmail.rs"
+                }
+              ]
+            },
+            {
+              "id": "gmail.send",
+              "name": "Email Sending",
+              "description": "Composes and sends a new email. Requires the user_confirmed flag to be true - Claude must show the draft to the user and get explicit approval before this flag is set. Constructs RFC 2822 format with proper headers.",
+              "source": "src/chat/tools/gmail.rs::send_email",
+              "decisions": [
+                {
+                  "id": "gmail.send.confirmation_gate",
+                  "name": "User Confirmation Gate",
+                  "description": "The send_email tool has a user_confirmed parameter. Claude must set this to true only after the user has explicitly approved the email. If user_confirmed is false or missing, the tool returns an error telling Claude to show the draft and ask for confirmation first.",
+                  "rationale": "This is the primary safety mechanism against accidental email sends. Claude drafts, user reviews, user confirms, then Claude sends."
+                },
+                {
+                  "id": "gmail.send.rfc2822_construction",
+                  "name": "RFC 2822 Message Construction",
+                  "description": "Builds the raw email message with From, To, CC, BCC, Subject, and body headers in RFC 2822 format. The message is base64url-encoded before sending to the Gmail API. Helper function handles the format so individual tools don't need to know the spec.",
+                  "source": "src/gmail/client.rs::build_rfc2822_message"
+                }
+              ]
+            },
+            {
+              "id": "gmail.reply",
+              "name": "Email Replying",
+              "description": "Replies to an existing email within a thread. Extracts the original message's headers (In-Reply-To, References, Message-ID) to maintain proper threading. Prepends 'Re: ' to the subject if not already present. Supports both reply (to sender only) and reply-all (to all recipients).",
+              "source": "src/chat/tools/gmail.rs::reply_to_email",
+              "decisions": [
+                {
+                  "id": "gmail.reply.threading_headers",
+                  "name": "Threading Header Extraction",
+                  "description": "Fetches the original email to extract its Message-ID, In-Reply-To, and References headers. Sets In-Reply-To to the original Message-ID and appends it to References. This ensures the reply appears in the correct thread in all email clients.",
+                  "rationale": "Without proper threading headers, replies show up as new conversations instead of being grouped with the original thread."
+                }
+              ]
+            },
+            {
+              "id": "gmail.draft",
+              "name": "Draft Saving",
+              "description": "Saves an email as a draft without sending it. Uses the Gmail /drafts endpoint. Supports saving reply drafts with proper threading headers (in_reply_to, references parameters).",
+              "source": "src/chat/tools/gmail.rs::save_draft",
+              "decisions": []
+            },
+            {
+              "id": "gmail.admin_search",
+              "name": "Admin Email Search (Delegation)",
+              "description": "Allows admin users to search other team members' Gmail accounts. Uses Google service account delegation to impersonate the target user. Can search a specific user's email or scan all workspace users in parallel.",
+              "source": "src/chat/tools/gmail.rs",
+              "decisions": [
+                {
+                  "id": "gmail.admin_search.parallel_workspace",
+                  "name": "Parallel Workspace Search",
+                  "description": "When searching all workspace emails, spawns concurrent tasks (via JoinSet) for each team member's inbox. Results are aggregated and sorted. Progress events fire as each user's search completes.",
+                  "rationale": "Sequential search across 6 users would take 6x as long. Parallel search reduces wall-clock time to roughly the slowest individual search."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "calendar",
+          "name": "Calendar",
+          "intent": "Lets Claude look up the user's schedule, find events, check attendees, and answer questions about meetings. Read-only access to Google Calendar with timezone-aware date handling.",
+          "description": "Google Calendar API integration for reading events across all of a user's calendars. Handles timezone conversion, multi-calendar aggregation, deduplication, and attendee details. Admin users can query other team members' calendars via delegation.",
+          "invariants": [
+            {
+              "id": "inv_timezone",
+              "name": "All date logic uses the user's local timezone",
+              "description": "The user's local time and IANA timezone (e.g. America/New_York) are sent with every chat request. All date calculations, calendar queries, and time-related tool calls use the user's timezone, not the server's. This prevents off-by-one day errors when the server is in a different timezone."
+            }
+          ],
+          "functions": [
+            {
+              "id": "calendar.list_calendars",
+              "name": "List Calendars",
+              "description": "Shows all calendars the user has access to, categorized by visibility: visible (checked in the UI), unchecked (accessible but not shown), and hidden. Useful for Claude to understand which calendars to search.",
+              "source": "src/chat/tools/calendar.rs::list_calendars",
+              "decisions": []
+            },
+            {
+              "id": "calendar.get_events",
+              "name": "Get Calendar Events",
+              "description": "Searches for events within a date range across ALL of the user's calendars. Deduplicates events that appear in multiple calendars, sorts by start time, and returns details including attendees, location, Meet links, and description.",
+              "source": "src/chat/tools/calendar.rs::get_calendar_events",
+              "decisions": [
+                {
+                  "id": "calendar.get_events.multi_calendar",
+                  "name": "Multi-Calendar Aggregation",
+                  "description": "Iterates through every calendar the user has access to, queries each one, deduplicates by event ID, and returns a unified sorted list. The user doesn't have to specify which calendar - we search all of them.",
+                  "rationale": "Users often have events on multiple calendars (personal, work, shared team calendars). Searching just the primary calendar would miss meetings."
+                },
+                {
+                  "id": "calendar.get_events.timezone_handling",
+                  "name": "Timezone-Aware Date Range",
+                  "description": "Parses the user's local time to extract their timezone offset (e.g. -04:00). Converts date ranges to RFC3339 with the user's offset. Increments the end date by 1 day to make the range inclusive (the Calendar API uses exclusive upper bounds). Sends the timeZone parameter so results come back in the user's local time.",
+                  "rationale": "The Calendar API is strict about RFC3339 format and uses exclusive end dates. Without proper timezone handling, a query for 'events on April 12' would either miss events or include April 13 events depending on the user's timezone."
+                }
+              ]
+            },
+            {
+              "id": "calendar.get_event",
+              "name": "Get Single Event",
+              "description": "Fetches a specific event by ID. Returns full details including all attendees with their response status (accepted, declined, tentative, needsAction), organizer, location, Google Meet link, and full description.",
+              "source": "src/chat/tools/calendar.rs::get_calendar_event",
+              "decisions": [
+                {
+                  "id": "calendar.get_event.meet_link_extraction",
+                  "name": "Meet Link Extraction",
+                  "description": "Extracts Google Meet links from two possible locations: the hangout_link field, or the conference_data.entry_points array (looking for the 'video' type). Some events have one, some have the other, some have both.",
+                  "source": "src/calendar/client.rs"
+                }
+              ]
+            },
+            {
+              "id": "calendar.by_participant",
+              "name": "Events by Participant",
+              "description": "Finds events where a specific person is an attendee. Searches across all calendars and filters by the participant's email address. Useful for answering 'when is my next meeting with X?'",
+              "source": "src/chat/tools/calendar.rs::get_calendar_events_by_participant",
+              "decisions": []
+            }
+          ]
+        },
+        {
+          "id": "recorder",
+          "name": "Meeting Recorder",
+          "intent": "Lets Claude find and read meeting recordings and transcripts. Connects calendar events to their recordings so users can ask about what was discussed in a meeting.",
+          "description": "Integration with the agency's meeting recording service. Searches for recordings by calendar event ID, participant, or date. Fetches full transcripts with speaker identification and timestamps. Non-admin users only see recordings they participated in.",
+          "functions": [
+            {
+              "id": "recorder.search_by_event",
+              "name": "Search by Calendar Event",
+              "description": "The most precise way to find a recording - looks up recordings linked to a specific calendar event ID. This is the first method Claude should try when looking for a meeting recording.",
+              "source": "src/chat/tools/recorder.rs::search_recording_by_event",
+              "decisions": []
+            },
+            {
+              "id": "recorder.search_by_participant",
+              "name": "Search by Participant",
+              "description": "Finds recordings where a specific person was an attendee. Searches by email or name. This is the fallback when no calendar event ID is available.",
+              "source": "src/chat/tools/recorder.rs::search_recordings_by_participant",
+              "decisions": [
+                {
+                  "id": "recorder.search_by_participant.user_filtering",
+                  "name": "Non-Admin Participant Filtering",
+                  "description": "For non-admin users, search results are filtered to only show recordings where the user was an attendee. Email comparison is case-insensitive. Admin users see all recordings regardless of participation.",
+                  "rationale": "Users shouldn't be able to listen in on meetings they weren't part of. Admin access is the exception for oversight purposes."
+                }
+              ]
+            },
+            {
+              "id": "recorder.get_transcript",
+              "name": "Get Full Transcript",
+              "description": "Fetches the complete transcript for a recording by ID. Returns segments with speaker name, text, and timestamps (formatted as HH:MM:SS). Segments may have gaps - the transcript isn't necessarily continuous.",
+              "source": "src/chat/tools/recorder.rs::get_meeting_transcript",
+              "decisions": []
+            },
+            {
+              "id": "recorder.search_transcripts",
+              "name": "Search Transcript Content",
+              "description": "Full-text search across transcript content. Finds recordings where specific words or phrases were spoken. This is the last resort in the fallback chain when other search methods don't find the right recording.",
+              "source": "src/chat/tools/recorder.rs::search_transcripts",
+              "decisions": []
+            },
+            {
+              "id": "recorder.fallback_chain",
+              "name": "Recording Lookup Fallback Chain",
+              "description": "The system prompt instructs Claude to follow a specific order when looking for meeting recordings: 1) Search by calendar event ID (most precise), 2) Search by participant email from the calendar event, 3) Search transcript content as a last resort.",
+              "source": "src/chat/claude_client.rs (system prompt)",
+              "decisions": [
+                {
+                  "id": "recorder.fallback_chain.strategy",
+                  "name": "Three-Step Fallback Strategy",
+                  "description": "Step 1: If the user mentions a meeting, look up the calendar event first to get its ID, then search recordings by event ID. Step 2: If no recording found by event ID, use the attendee emails from the calendar event to search by participant. Step 3: If still no recording, search transcript content for keywords from the user's question.",
+                  "rationale": "Event ID is the most reliable link but not all recordings have one. Participant search is broader. Transcript search is the broadest but least precise. Trying them in order of precision minimizes false matches."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "chad_ads",
+          "name": "Chad Ads (Google Ads)",
+          "intent": "Lets Claude interact with Google Ads accounts through a conversational interface. Users can check campaign performance, create campaigns, and manage ads by chatting naturally.",
+          "description": "Integration with the Chad Ads API, which provides a chat-style interface to Google Ads. Multi-turn conversations are tracked per customer (ad account) ID. Supports both read operations (checking metrics) and write operations (creating campaigns, changing budgets) with safety checks for writes.",
+          "entities": [
+            {
+              "id": "chad_ads_token",
+              "name": "ChadAdsToken",
+              "description": "OAuth credentials for a user's Google Ads account, obtained through the Chad Ads integration. One record per user. Stores the user token and optionally a selected customer (ad account) ID.",
+              "key_fields": [
+                "user_token - OAuth token for Chad Ads API",
+                "customer_id - nullable, the selected Google Ads customer account ID"
+              ]
+            }
+          ],
+          "functions": [
+            {
+              "id": "chad_ads.list_customers",
+              "name": "List Customer Accounts",
+              "description": "Shows all Google Ads customer accounts connected to the user. If exactly one account exists, it's auto-selected. If multiple exist, Claude presents the list and asks the user which one to work with.",
+              "source": "src/chat/tools/chad_ads.rs::list_customers",
+              "decisions": [
+                {
+                  "id": "chad_ads.list_customers.auto_select",
+                  "name": "Auto-Select Single Account",
+                  "description": "If the user has exactly one Google Ads customer account, it's automatically selected without asking. This avoids a needless 'which account?' question for users with only one account.",
+                  "source": "src/chat/tools/chad_ads.rs"
+                }
+              ]
+            },
+            {
+              "id": "chad_ads.ask",
+              "name": "Ask Chad Ads",
+              "description": "Sends a message to the Chad Ads API as part of a multi-turn conversation. Takes the conversation history (array of role/content messages), appends the new message, gets the response, and returns the updated history. The history is formatted with a customer_id marker so Claude knows which account it belongs to.",
+              "source": "src/chat/tools/chad_ads.rs::ask_chad_ads",
+              "decisions": [
+                {
+                  "id": "chad_ads.ask.history_tracking",
+                  "name": "Ephemeral Conversation History",
+                  "description": "Conversation history is stored in the tool result text, not in the database. It's formatted as [CHAD_ADS_CONVERSATION_HISTORY:customer_id=X:JSON] so Claude can parse it and pass it back on the next message. History is lost when the chat session ends.",
+                  "rationale": "Storing history in the tool result keeps it simple - no extra database table needed. The tradeoff is that history is lost between chat sessions, but for ad management queries this is acceptable.",
+                  "uncertain": true,
+                  "uncertainty_note": "I'm not sure if the history format is robust enough - if the JSON gets very large, it could hit the 256KB truncation limit and corrupt the history."
+                },
+                {
+                  "id": "chad_ads.ask.empty_message_filter",
+                  "name": "Empty Message Filtering",
+                  "description": "Before sending to the Chad Ads API, filters out any assistant messages with empty content. This prevents 'empty assistant turn' errors from the API.",
+                  "source": "src/chat/tools/chad_ads.rs"
+                }
+              ]
+            },
+            {
+              "id": "chad_ads.connection_flow",
+              "name": "Connection Flow",
+              "description": "Users connect their Google Ads account through an OAuth flow. The frontend shows a 'Connect Chad Ads' button if no token exists. Clicking it redirects to the Chad Ads OAuth page. After authorization, the callback stores the token and auto-selects the customer account if there's only one.",
+              "source": "src/main.rs::chad_ads_callback",
+              "decisions": [
+                {
+                  "id": "chad_ads.connection_flow.callback_verify",
+                  "name": "Auth Token Verification in Callback",
+                  "description": "The Chad Ads OAuth callback verifies the user's auth token (passed in the state parameter) before storing the Chad Ads token. This prevents token injection - someone can't forge a callback to link their ads account to another user.",
+                  "source": "src/main.rs"
+                }
+              ]
+            },
+            {
+              "id": "chad_ads.write_safety",
+              "name": "Write Operation Safety",
+              "description": "The system prompt instructs Claude to ask for user confirmation before performing write operations in Google Ads (creating campaigns, changing budgets, enabling/pausing ads). Read operations (checking metrics, listing campaigns) don't need confirmation.",
+              "source": "src/chat/claude_client.rs (system prompt)",
+              "decisions": [
+                {
+                  "id": "chad_ads.write_safety.prompt_enforcement",
+                  "name": "Prompt-Level Write Safety",
+                  "description": "Write safety for Chad Ads is enforced via the system prompt, not via code. Claude is told to ask before writes. This is softer than the email confirmation gate (which has a code-level user_confirmed flag), but sufficient because Chad Ads writes go through their own API which has its own undo mechanisms.",
+                  "rationale": "Unlike email (which can't be unsent), most Google Ads changes can be reversed. Prompt-level enforcement provides a reasonable safety net without the complexity of a code-level gate."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "google_tasks",
+          "name": "Google Tasks",
+          "intent": "Lets Claude and the triage UI create, manage, and organize tasks in Google Tasks. Used both directly through chat and as the backend for meeting review task creation.",
+          "entities": [
+            {
+              "id": "google_task",
+              "name": "GoogleTask",
+              "description": "A task in Google Tasks. Represents an action item that can be created, updated, completed, or deleted through the API.",
+              "key_fields": [
+                "title - task description",
+                "notes - additional details or context",
+                "due_date - when the task is due (nullable)",
+                "status - needsAction or completed",
+                "parent_task - ID of parent task for subtasks (nullable)",
+                "task_list_id - which task list this belongs to"
+              ]
+            },
+            {
+              "id": "google_task_list",
+              "name": "GoogleTaskList",
+              "description": "A task list in Google Tasks. Contains multiple tasks and can be created, renamed, or deleted.",
+              "key_fields": [
+                "title - name of the task list",
+                "id - Google's unique identifier for the list"
+              ]
+            }
+          ],
+          "functions": [
+            {
+              "id": "google_tasks.client",
+              "name": "Tasks API Client",
+              "description": "HTTP client for Google Tasks API. Supports CRUD for both task lists and individual tasks. Handles pagination for large lists.",
+              "decisions": []
+            },
+            {
+              "id": "google_tasks.tools",
+              "name": "Tasks Chat Tools",
+              "description": "11 tool functions available to Claude: list/create/update/delete task lists, list/get/create/update/complete/delete/move tasks. Formats output with checkbox icons, due dates, and direct links. Admin variants allow managing other users' tasks.",
+              "decisions": []
+            }
+          ]
+        },
+        {
+          "id": "stripe",
+          "name": "Stripe",
+          "intent": "Admin-only tools for querying Stripe billing data. Lets Claude look up customers, subscriptions, invoices, charges, and disputes for financial reporting and client management.",
+          "invariants": [
+            {
+              "id": "inv_stripe_admin_only",
+              "name": "Stripe tools are admin-only",
+              "description": "All Stripe tools require is_admin=true. Non-admin users cannot access any billing data through chat."
+            }
+          ],
+          "functions": [
+            {
+              "id": "stripe.tools",
+              "name": "Stripe Chat Tools",
+              "description": "5 admin-only tool functions: list customers, list subscriptions, list invoices, list charges, list disputes. All support filtering by date range, customer, status. Human-readable formatting with currency conversion.",
+              "decisions": []
+            }
+          ]
+        }
       ]
     },
     {
@@ -263,383 +646,6 @@
               "uncertainty_note": "I'm not sure if there's any cleanup mechanism for old auth tokens, or if they accumulate forever in the database."
             }
           ]
-        }
-      ]
-    },
-    {
-      "id": "gmail",
-      "name": "Gmail",
-      "intent": "Lets Claude read and send email on behalf of the user. Searching, reading threads, composing new messages, replying, and saving drafts - all through natural language in chat.",
-      "description": "Gmail API integration with full email lifecycle: search, read, send (with confirmation), reply, reply-all, and draft. Handles RFC 2822 message construction, multi-part MIME parsing, and Gmail deep link generation. Admin users can search other team members' inboxes via delegation.",
-      "invariants": [
-        {
-          "id": "inv_email_confirmation",
-          "name": "Email sends always require explicit user confirmation",
-          "description": "Claude must draft the email in chat, show the recipients, subject, and body to the user, and wait for explicit approval before sending. The user_confirmed flag can only be set by Claude after the user says yes. This prevents accidental email sends."
-        },
-        {
-          "id": "inv_token_refresh",
-          "name": "OAuth tokens are refreshed proactively before every API call",
-          "description": "Before making any Gmail, Calendar, or other Google API call, the system refreshes the access token proactively. If the refresh fails, it falls back to the cached token. There is no retry-on-401 logic - the refresh happens before the call, not after a failure."
-        }
-      ],
-      "functions": [
-        {
-          "id": "gmail.search",
-          "name": "Email Search",
-          "description": "Searches the user's Gmail using Gmail's native query syntax. Returns parsed emails with sender, subject, snippet, date, and thread ID. Supports pagination and sends progress updates every 10 emails for large searches.",
-          "source": "src/chat/tools/gmail.rs::search_emails",
-          "decisions": [
-            {
-              "id": "gmail.search.progress_updates",
-              "name": "Progress Every 10 Emails",
-              "description": "During large searches, sends a tool_progress event to the frontend every 10 emails processed. This keeps the user informed during searches that might take 10-30 seconds.",
-              "source": "src/chat/tools/gmail.rs"
-            },
-            {
-              "id": "gmail.search.result_cap",
-              "name": "500 Email Result Cap",
-              "description": "Search results are capped at 500 emails. Combined with the 256KB output truncation, this prevents a broad search from overwhelming Claude's context window.",
-              "source": "src/chat/tools/gmail.rs"
-            }
-          ]
-        },
-        {
-          "id": "gmail.read",
-          "name": "Email Reading",
-          "description": "Fetches a single email or an entire thread with full message bodies. Parses multi-part MIME to extract readable text, preferring text/plain over HTML. Generates Gmail deep links using the user's email as the authuser parameter so links open in the correct account.",
-          "source": "src/chat/tools/gmail.rs",
-          "decisions": [
-            {
-              "id": "gmail.read.body_parsing",
-              "name": "Text/Plain Preferred Over HTML",
-              "description": "When parsing email bodies, prefers text/plain parts over HTML. Falls back to HTML if no plain text is available. This gives Claude clean text to work with instead of HTML markup.",
-              "source": "src/gmail/client.rs"
-            },
-            {
-              "id": "gmail.read.deep_links",
-              "name": "Multi-Account Gmail Deep Links",
-              "description": "Gmail links include ?authuser=EMAIL so they open in the correct Google account when the user has multiple accounts signed in. Format: https://mail.google.com/mail/?authuser=EMAIL#inbox/THREAD_ID",
-              "source": "src/chat/tools/gmail.rs"
-            }
-          ]
-        },
-        {
-          "id": "gmail.send",
-          "name": "Email Sending",
-          "description": "Composes and sends a new email. Requires the user_confirmed flag to be true - Claude must show the draft to the user and get explicit approval before this flag is set. Constructs RFC 2822 format with proper headers.",
-          "source": "src/chat/tools/gmail.rs::send_email",
-          "decisions": [
-            {
-              "id": "gmail.send.confirmation_gate",
-              "name": "User Confirmation Gate",
-              "description": "The send_email tool has a user_confirmed parameter. Claude must set this to true only after the user has explicitly approved the email. If user_confirmed is false or missing, the tool returns an error telling Claude to show the draft and ask for confirmation first.",
-              "rationale": "This is the primary safety mechanism against accidental email sends. Claude drafts, user reviews, user confirms, then Claude sends."
-            },
-            {
-              "id": "gmail.send.rfc2822_construction",
-              "name": "RFC 2822 Message Construction",
-              "description": "Builds the raw email message with From, To, CC, BCC, Subject, and body headers in RFC 2822 format. The message is base64url-encoded before sending to the Gmail API. Helper function handles the format so individual tools don't need to know the spec.",
-              "source": "src/gmail/client.rs::build_rfc2822_message"
-            }
-          ]
-        },
-        {
-          "id": "gmail.reply",
-          "name": "Email Replying",
-          "description": "Replies to an existing email within a thread. Extracts the original message's headers (In-Reply-To, References, Message-ID) to maintain proper threading. Prepends 'Re: ' to the subject if not already present. Supports both reply (to sender only) and reply-all (to all recipients).",
-          "source": "src/chat/tools/gmail.rs::reply_to_email",
-          "decisions": [
-            {
-              "id": "gmail.reply.threading_headers",
-              "name": "Threading Header Extraction",
-              "description": "Fetches the original email to extract its Message-ID, In-Reply-To, and References headers. Sets In-Reply-To to the original Message-ID and appends it to References. This ensures the reply appears in the correct thread in all email clients.",
-              "rationale": "Without proper threading headers, replies show up as new conversations instead of being grouped with the original thread."
-            }
-          ]
-        },
-        {
-          "id": "gmail.draft",
-          "name": "Draft Saving",
-          "description": "Saves an email as a draft without sending it. Uses the Gmail /drafts endpoint. Supports saving reply drafts with proper threading headers (in_reply_to, references parameters).",
-          "source": "src/chat/tools/gmail.rs::save_draft",
-          "decisions": []
-        },
-        {
-          "id": "gmail.admin_search",
-          "name": "Admin Email Search (Delegation)",
-          "description": "Allows admin users to search other team members' Gmail accounts. Uses Google service account delegation to impersonate the target user. Can search a specific user's email or scan all workspace users in parallel.",
-          "source": "src/chat/tools/gmail.rs",
-          "decisions": [
-            {
-              "id": "gmail.admin_search.parallel_workspace",
-              "name": "Parallel Workspace Search",
-              "description": "When searching all workspace emails, spawns concurrent tasks (via JoinSet) for each team member's inbox. Results are aggregated and sorted. Progress events fire as each user's search completes.",
-              "rationale": "Sequential search across 6 users would take 6x as long. Parallel search reduces wall-clock time to roughly the slowest individual search."
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "calendar",
-      "name": "Calendar",
-      "intent": "Lets Claude look up the user's schedule, find events, check attendees, and answer questions about meetings. Read-only access to Google Calendar with timezone-aware date handling.",
-      "description": "Google Calendar API integration for reading events across all of a user's calendars. Handles timezone conversion, multi-calendar aggregation, deduplication, and attendee details. Admin users can query other team members' calendars via delegation.",
-      "invariants": [
-        {
-          "id": "inv_timezone",
-          "name": "All date logic uses the user's local timezone",
-          "description": "The user's local time and IANA timezone (e.g. America/New_York) are sent with every chat request. All date calculations, calendar queries, and time-related tool calls use the user's timezone, not the server's. This prevents off-by-one day errors when the server is in a different timezone."
-        }
-      ],
-      "functions": [
-        {
-          "id": "calendar.list_calendars",
-          "name": "List Calendars",
-          "description": "Shows all calendars the user has access to, categorized by visibility: visible (checked in the UI), unchecked (accessible but not shown), and hidden. Useful for Claude to understand which calendars to search.",
-          "source": "src/chat/tools/calendar.rs::list_calendars",
-          "decisions": []
-        },
-        {
-          "id": "calendar.get_events",
-          "name": "Get Calendar Events",
-          "description": "Searches for events within a date range across ALL of the user's calendars. Deduplicates events that appear in multiple calendars, sorts by start time, and returns details including attendees, location, Meet links, and description.",
-          "source": "src/chat/tools/calendar.rs::get_calendar_events",
-          "decisions": [
-            {
-              "id": "calendar.get_events.multi_calendar",
-              "name": "Multi-Calendar Aggregation",
-              "description": "Iterates through every calendar the user has access to, queries each one, deduplicates by event ID, and returns a unified sorted list. The user doesn't have to specify which calendar - we search all of them.",
-              "rationale": "Users often have events on multiple calendars (personal, work, shared team calendars). Searching just the primary calendar would miss meetings."
-            },
-            {
-              "id": "calendar.get_events.timezone_handling",
-              "name": "Timezone-Aware Date Range",
-              "description": "Parses the user's local time to extract their timezone offset (e.g. -04:00). Converts date ranges to RFC3339 with the user's offset. Increments the end date by 1 day to make the range inclusive (the Calendar API uses exclusive upper bounds). Sends the timeZone parameter so results come back in the user's local time.",
-              "rationale": "The Calendar API is strict about RFC3339 format and uses exclusive end dates. Without proper timezone handling, a query for 'events on April 12' would either miss events or include April 13 events depending on the user's timezone."
-            }
-          ]
-        },
-        {
-          "id": "calendar.get_event",
-          "name": "Get Single Event",
-          "description": "Fetches a specific event by ID. Returns full details including all attendees with their response status (accepted, declined, tentative, needsAction), organizer, location, Google Meet link, and full description.",
-          "source": "src/chat/tools/calendar.rs::get_calendar_event",
-          "decisions": [
-            {
-              "id": "calendar.get_event.meet_link_extraction",
-              "name": "Meet Link Extraction",
-              "description": "Extracts Google Meet links from two possible locations: the hangout_link field, or the conference_data.entry_points array (looking for the 'video' type). Some events have one, some have the other, some have both.",
-              "source": "src/calendar/client.rs"
-            }
-          ]
-        },
-        {
-          "id": "calendar.by_participant",
-          "name": "Events by Participant",
-          "description": "Finds events where a specific person is an attendee. Searches across all calendars and filters by the participant's email address. Useful for answering 'when is my next meeting with X?'",
-          "source": "src/chat/tools/calendar.rs::get_calendar_events_by_participant",
-          "decisions": []
-        }
-      ]
-    },
-    {
-      "id": "recorder",
-      "name": "Meeting Recorder",
-      "intent": "Lets Claude find and read meeting recordings and transcripts. Connects calendar events to their recordings so users can ask about what was discussed in a meeting.",
-      "description": "Integration with the agency's meeting recording service. Searches for recordings by calendar event ID, participant, or date. Fetches full transcripts with speaker identification and timestamps. Non-admin users only see recordings they participated in.",
-      "functions": [
-        {
-          "id": "recorder.search_by_event",
-          "name": "Search by Calendar Event",
-          "description": "The most precise way to find a recording - looks up recordings linked to a specific calendar event ID. This is the first method Claude should try when looking for a meeting recording.",
-          "source": "src/chat/tools/recorder.rs::search_recording_by_event",
-          "decisions": []
-        },
-        {
-          "id": "recorder.search_by_participant",
-          "name": "Search by Participant",
-          "description": "Finds recordings where a specific person was an attendee. Searches by email or name. This is the fallback when no calendar event ID is available.",
-          "source": "src/chat/tools/recorder.rs::search_recordings_by_participant",
-          "decisions": [
-            {
-              "id": "recorder.search_by_participant.user_filtering",
-              "name": "Non-Admin Participant Filtering",
-              "description": "For non-admin users, search results are filtered to only show recordings where the user was an attendee. Email comparison is case-insensitive. Admin users see all recordings regardless of participation.",
-              "rationale": "Users shouldn't be able to listen in on meetings they weren't part of. Admin access is the exception for oversight purposes."
-            }
-          ]
-        },
-        {
-          "id": "recorder.get_transcript",
-          "name": "Get Full Transcript",
-          "description": "Fetches the complete transcript for a recording by ID. Returns segments with speaker name, text, and timestamps (formatted as HH:MM:SS). Segments may have gaps - the transcript isn't necessarily continuous.",
-          "source": "src/chat/tools/recorder.rs::get_meeting_transcript",
-          "decisions": []
-        },
-        {
-          "id": "recorder.search_transcripts",
-          "name": "Search Transcript Content",
-          "description": "Full-text search across transcript content. Finds recordings where specific words or phrases were spoken. This is the last resort in the fallback chain when other search methods don't find the right recording.",
-          "source": "src/chat/tools/recorder.rs::search_transcripts",
-          "decisions": []
-        },
-        {
-          "id": "recorder.fallback_chain",
-          "name": "Recording Lookup Fallback Chain",
-          "description": "The system prompt instructs Claude to follow a specific order when looking for meeting recordings: 1) Search by calendar event ID (most precise), 2) Search by participant email from the calendar event, 3) Search transcript content as a last resort.",
-          "source": "src/chat/claude_client.rs (system prompt)",
-          "decisions": [
-            {
-              "id": "recorder.fallback_chain.strategy",
-              "name": "Three-Step Fallback Strategy",
-              "description": "Step 1: If the user mentions a meeting, look up the calendar event first to get its ID, then search recordings by event ID. Step 2: If no recording found by event ID, use the attendee emails from the calendar event to search by participant. Step 3: If still no recording, search transcript content for keywords from the user's question.",
-              "rationale": "Event ID is the most reliable link but not all recordings have one. Participant search is broader. Transcript search is the broadest but least precise. Trying them in order of precision minimizes false matches."
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "chad_ads",
-      "name": "Chad Ads (Google Ads)",
-      "intent": "Lets Claude interact with Google Ads accounts through a conversational interface. Users can check campaign performance, create campaigns, and manage ads by chatting naturally.",
-      "description": "Integration with the Chad Ads API, which provides a chat-style interface to Google Ads. Multi-turn conversations are tracked per customer (ad account) ID. Supports both read operations (checking metrics) and write operations (creating campaigns, changing budgets) with safety checks for writes.",
-      "entities": [
-        {
-          "id": "chad_ads_token",
-          "name": "ChadAdsToken",
-          "description": "OAuth credentials for a user's Google Ads account, obtained through the Chad Ads integration. One record per user. Stores the user token and optionally a selected customer (ad account) ID.",
-          "key_fields": [
-            "user_token - OAuth token for Chad Ads API",
-            "customer_id - nullable, the selected Google Ads customer account ID"
-          ]
-        }
-      ],
-      "functions": [
-        {
-          "id": "chad_ads.list_customers",
-          "name": "List Customer Accounts",
-          "description": "Shows all Google Ads customer accounts connected to the user. If exactly one account exists, it's auto-selected. If multiple exist, Claude presents the list and asks the user which one to work with.",
-          "source": "src/chat/tools/chad_ads.rs::list_customers",
-          "decisions": [
-            {
-              "id": "chad_ads.list_customers.auto_select",
-              "name": "Auto-Select Single Account",
-              "description": "If the user has exactly one Google Ads customer account, it's automatically selected without asking. This avoids a needless 'which account?' question for users with only one account.",
-              "source": "src/chat/tools/chad_ads.rs"
-            }
-          ]
-        },
-        {
-          "id": "chad_ads.ask",
-          "name": "Ask Chad Ads",
-          "description": "Sends a message to the Chad Ads API as part of a multi-turn conversation. Takes the conversation history (array of role/content messages), appends the new message, gets the response, and returns the updated history. The history is formatted with a customer_id marker so Claude knows which account it belongs to.",
-          "source": "src/chat/tools/chad_ads.rs::ask_chad_ads",
-          "decisions": [
-            {
-              "id": "chad_ads.ask.history_tracking",
-              "name": "Ephemeral Conversation History",
-              "description": "Conversation history is stored in the tool result text, not in the database. It's formatted as [CHAD_ADS_CONVERSATION_HISTORY:customer_id=X:JSON] so Claude can parse it and pass it back on the next message. History is lost when the chat session ends.",
-              "rationale": "Storing history in the tool result keeps it simple - no extra database table needed. The tradeoff is that history is lost between chat sessions, but for ad management queries this is acceptable.",
-              "uncertain": true,
-              "uncertainty_note": "I'm not sure if the history format is robust enough - if the JSON gets very large, it could hit the 256KB truncation limit and corrupt the history."
-            },
-            {
-              "id": "chad_ads.ask.empty_message_filter",
-              "name": "Empty Message Filtering",
-              "description": "Before sending to the Chad Ads API, filters out any assistant messages with empty content. This prevents 'empty assistant turn' errors from the API.",
-              "source": "src/chat/tools/chad_ads.rs"
-            }
-          ]
-        },
-        {
-          "id": "chad_ads.connection_flow",
-          "name": "Connection Flow",
-          "description": "Users connect their Google Ads account through an OAuth flow. The frontend shows a 'Connect Chad Ads' button if no token exists. Clicking it redirects to the Chad Ads OAuth page. After authorization, the callback stores the token and auto-selects the customer account if there's only one.",
-          "source": "src/main.rs::chad_ads_callback",
-          "decisions": [
-            {
-              "id": "chad_ads.connection_flow.callback_verify",
-              "name": "Auth Token Verification in Callback",
-              "description": "The Chad Ads OAuth callback verifies the user's auth token (passed in the state parameter) before storing the Chad Ads token. This prevents token injection - someone can't forge a callback to link their ads account to another user.",
-              "source": "src/main.rs"
-            }
-          ]
-        },
-        {
-          "id": "chad_ads.write_safety",
-          "name": "Write Operation Safety",
-          "description": "The system prompt instructs Claude to ask for user confirmation before performing write operations in Google Ads (creating campaigns, changing budgets, enabling/pausing ads). Read operations (checking metrics, listing campaigns) don't need confirmation.",
-          "source": "src/chat/claude_client.rs (system prompt)",
-          "decisions": [
-            {
-              "id": "chad_ads.write_safety.prompt_enforcement",
-              "name": "Prompt-Level Write Safety",
-              "description": "Write safety for Chad Ads is enforced via the system prompt, not via code. Claude is told to ask before writes. This is softer than the email confirmation gate (which has a code-level user_confirmed flag), but sufficient because Chad Ads writes go through their own API which has its own undo mechanisms.",
-              "rationale": "Unlike email (which can't be unsent), most Google Ads changes can be reversed. Prompt-level enforcement provides a reasonable safety net without the complexity of a code-level gate."
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "database",
-      "name": "Database",
-      "intent": "Persists all application state - users, sessions, OAuth tokens, chat history, and integration credentials. The single source of truth for who's logged in, what they've said, and what services they've connected.",
-      "description": "SQLite database accessed via Diesel ORM with R2D2 connection pooling. 6 tables covering users, auth tokens, Google tokens, chat threads, chat messages, and Chad Ads tokens. All timestamps are UTC ISO 8601 strings. Migrations run automatically on startup.",
-      "invariants": [
-        {
-          "id": "inv_timestamps_utc",
-          "name": "All stored timestamps are UTC ISO 8601",
-          "description": "Every timestamp in the database is stored as a UTC ISO 8601 string (e.g. '2026-04-12 14:30:00'). Timezone conversion happens at the API boundary, not in storage."
-        }
-      ],
-      "functions": [
-        {
-          "id": "database.user_management",
-          "name": "User Management",
-          "description": "Creates or updates user records. Uses google_sub as the unique key for upserts. On every login, email, name, picture_url, and is_admin are refreshed from Google's profile data.",
-          "source": "src/database.rs::upsert_user",
-          "decisions": []
-        },
-        {
-          "id": "database.token_storage",
-          "name": "Token Storage",
-          "description": "Stores and retrieves both auth tokens (session UUIDs) and Google OAuth tokens (access + refresh). Auth tokens can have multiple per user (one per browser session). Google tokens are one per user (unique on user_id).",
-          "source": "src/database.rs",
-          "decisions": [
-            {
-              "id": "database.token_storage.one_google_token",
-              "name": "One Google Token Record Per User",
-              "description": "The google_tokens table has a unique constraint on user_id. Each login replaces the previous Google token. This means a user can only have one set of active OAuth credentials at a time.",
-              "rationale": "A user only has one Google account. Multiple token records would create confusion about which one to use."
-            }
-          ]
-        },
-        {
-          "id": "database.chat_storage",
-          "name": "Chat Storage",
-          "description": "Stores chat threads and messages. Threads belong to a user and have a title. Messages belong to a thread, have a role (user/assistant) and content. Thread's updated_at timestamp changes on every new message for sorting. Deleting a thread cascades to delete all its messages.",
-          "source": "src/database.rs",
-          "decisions": [
-            {
-              "id": "database.chat_storage.no_tool_persistence",
-              "name": "Tool Calls Not Persisted",
-              "description": "Only the role and content of messages are stored. Tool calls, tool names, and tool results are not saved to the database. When loading a thread's history, there's no record of which tools were used.",
-              "rationale": "Tool results can be very large (email bodies, transcripts) and change over time. Storing them would bloat the database and create stale data. The conversation history Claude sees is text-only.",
-              "uncertain": true,
-              "uncertainty_note": "This means when continuing a conversation in a new session, Claude has no memory of what tools it used previously. It can see its own text responses but not the tool context that led to them."
-            }
-          ]
-        },
-        {
-          "id": "database.migrations",
-          "name": "Auto-Migration on Startup",
-          "description": "All pending database migrations run automatically when the server starts. The initial migration creates users, auth_tokens, google_tokens, chat_threads, and chat_messages. A second migration adds chad_ads_tokens.",
-          "source": "src/database.rs",
-          "decisions": []
         }
       ]
     },
@@ -825,64 +831,60 @@
       ]
     },
     {
-      "id": "google_tasks",
-      "name": "Google Tasks",
-      "intent": "Lets Claude and the triage UI create, manage, and organize tasks in Google Tasks. Used both directly through chat and as the backend for meeting review task creation.",
-      "entities": [
-        {
-          "id": "google_task",
-          "name": "GoogleTask",
-          "description": "A task in Google Tasks. Represents an action item that can be created, updated, completed, or deleted through the API.",
-          "key_fields": [
-            "title - task description",
-            "notes - additional details or context",
-            "due_date - when the task is due (nullable)",
-            "status - needsAction or completed",
-            "parent_task - ID of parent task for subtasks (nullable)",
-            "task_list_id - which task list this belongs to"
-          ]
-        },
-        {
-          "id": "google_task_list",
-          "name": "GoogleTaskList",
-          "description": "A task list in Google Tasks. Contains multiple tasks and can be created, renamed, or deleted.",
-          "key_fields": [
-            "title - name of the task list",
-            "id - Google's unique identifier for the list"
-          ]
-        }
-      ],
-      "functions": [
-        {
-          "id": "google_tasks.client",
-          "name": "Tasks API Client",
-          "description": "HTTP client for Google Tasks API. Supports CRUD for both task lists and individual tasks. Handles pagination for large lists.",
-          "decisions": []
-        },
-        {
-          "id": "google_tasks.tools",
-          "name": "Tasks Chat Tools",
-          "description": "11 tool functions available to Claude: list/create/update/delete task lists, list/get/create/update/complete/delete/move tasks. Formats output with checkbox icons, due dates, and direct links. Admin variants allow managing other users' tasks.",
-          "decisions": []
-        }
-      ]
-    },
-    {
-      "id": "stripe",
-      "name": "Stripe",
-      "intent": "Admin-only tools for querying Stripe billing data. Lets Claude look up customers, subscriptions, invoices, charges, and disputes for financial reporting and client management.",
+      "id": "database",
+      "name": "Database",
+      "intent": "Persists all application state - users, sessions, OAuth tokens, chat history, and integration credentials. The single source of truth for who's logged in, what they've said, and what services they've connected.",
+      "description": "SQLite database accessed via Diesel ORM with R2D2 connection pooling. 6 tables covering users, auth tokens, Google tokens, chat threads, chat messages, and Chad Ads tokens. All timestamps are UTC ISO 8601 strings. Migrations run automatically on startup.",
       "invariants": [
         {
-          "id": "inv_stripe_admin_only",
-          "name": "Stripe tools are admin-only",
-          "description": "All Stripe tools require is_admin=true. Non-admin users cannot access any billing data through chat."
+          "id": "inv_timestamps_utc",
+          "name": "All stored timestamps are UTC ISO 8601",
+          "description": "Every timestamp in the database is stored as a UTC ISO 8601 string (e.g. '2026-04-12 14:30:00'). Timezone conversion happens at the API boundary, not in storage."
         }
       ],
       "functions": [
         {
-          "id": "stripe.tools",
-          "name": "Stripe Chat Tools",
-          "description": "5 admin-only tool functions: list customers, list subscriptions, list invoices, list charges, list disputes. All support filtering by date range, customer, status. Human-readable formatting with currency conversion.",
+          "id": "database.user_management",
+          "name": "User Management",
+          "description": "Creates or updates user records. Uses google_sub as the unique key for upserts. On every login, email, name, picture_url, and is_admin are refreshed from Google's profile data.",
+          "source": "src/database.rs::upsert_user",
+          "decisions": []
+        },
+        {
+          "id": "database.token_storage",
+          "name": "Token Storage",
+          "description": "Stores and retrieves both auth tokens (session UUIDs) and Google OAuth tokens (access + refresh). Auth tokens can have multiple per user (one per browser session). Google tokens are one per user (unique on user_id).",
+          "source": "src/database.rs",
+          "decisions": [
+            {
+              "id": "database.token_storage.one_google_token",
+              "name": "One Google Token Record Per User",
+              "description": "The google_tokens table has a unique constraint on user_id. Each login replaces the previous Google token. This means a user can only have one set of active OAuth credentials at a time.",
+              "rationale": "A user only has one Google account. Multiple token records would create confusion about which one to use."
+            }
+          ]
+        },
+        {
+          "id": "database.chat_storage",
+          "name": "Chat Storage",
+          "description": "Stores chat threads and messages. Threads belong to a user and have a title. Messages belong to a thread, have a role (user/assistant) and content. Thread's updated_at timestamp changes on every new message for sorting. Deleting a thread cascades to delete all its messages.",
+          "source": "src/database.rs",
+          "decisions": [
+            {
+              "id": "database.chat_storage.no_tool_persistence",
+              "name": "Tool Calls Not Persisted",
+              "description": "Only the role and content of messages are stored. Tool calls, tool names, and tool results are not saved to the database. When loading a thread's history, there's no record of which tools were used.",
+              "rationale": "Tool results can be very large (email bodies, transcripts) and change over time. Storing them would bloat the database and create stale data. The conversation history Claude sees is text-only.",
+              "uncertain": true,
+              "uncertainty_note": "This means when continuing a conversation in a new session, Claude has no memory of what tools it used previously. It can see its own text responses but not the tool context that led to them."
+            }
+          ]
+        },
+        {
+          "id": "database.migrations",
+          "name": "Auto-Migration on Startup",
+          "description": "All pending database migrations run automatically when the server starts. The initial migration creates users, auth_tokens, google_tokens, chat_threads, and chat_messages. A second migration adds chad_ads_tokens.",
+          "source": "src/database.rs",
           "decisions": []
         }
       ]
