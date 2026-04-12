@@ -756,14 +756,15 @@
       "who": "Will primarily, though all team members have it available. Will reviews 30-50 emails per day through the triage queue instead of scrolling through 200+ raw inbox messages.",
       "limitations": [
         "AI classification isn't perfect - occasionally filters out an important email or lets noise through",
-        "Email polling is every 120 seconds, so there's a delay between receiving an email and seeing it in the queue",
+        "Email polling is every 120 seconds, so there's up to a 2-minute delay. Will be replaced by Gmail webhooks once live for near real-time delivery",
         "Calendar context enrichment only looks back 30 days, so context from older client relationships is missed",
         "No ability to create filter rules through the UI yet - filter rules have to be added directly to the database"
       ],
       "history": [
         "Built because Will said he was 'drowning in email' and wanted Claude to pre-sort his inbox",
         "The AI classification layer was added after simple keyword/domain filtering wasn't selective enough",
-        "Calendar context enrichment was added so Claude could say 'you met with this person last week about X' when triaging their email"
+        "Calendar context enrichment was added so Claude could say 'you met with this person last week about X' when triaging their email",
+        "Planning to replace 120-second polling with Gmail push notifications (webhooks) once live - will make email appear in the triage queue in near real-time instead of up to 2 minutes delay"
       ],
       "invariants": [
         {
@@ -866,14 +867,15 @@
       "limitations": [
         "Barbara Ann (the AI agent) sometimes misidentifies who should own a task, especially when multiple people discuss an action item",
         "Transcript quality depends on the recording service - poor audio leads to poor task extraction",
-        "Meeting polling is every 300 seconds, and transcript processing is slow, so there can be a 10+ minute delay after a meeting ends before tasks appear",
+        "Meeting polling is every 300 seconds, adding delay on top of transcript processing time. Will be replaced by webhooks once live for immediate processing when recordings are ready",
         "No way to manually trigger processing for a specific meeting - have to wait for the polling cycle"
       ],
       "history": [
         "Started as a manual workflow - Will would paste meeting transcripts into chat and ask Claude to extract tasks",
         "Automated the pipeline when the manual process proved valuable but tedious",
         "Named the extraction agent 'Barbara Ann' as an internal codename",
-        "Added Google Tasks integration so accepted tasks go directly into the team's task management system"
+        "Added Google Tasks integration so accepted tasks go directly into the team's task management system",
+        "Planning to replace 300-second polling with recording service webhooks once live - will trigger processing immediately when a recording is ready instead of waiting for the next poll cycle"
       ],
       "invariants": [
         {
