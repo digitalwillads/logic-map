@@ -8,9 +8,7 @@ interface DocumentViewProps {
 
 export function DocumentView({ logicMap }: DocumentViewProps) {
   // Nav state: which page are we on?
-  const [activePage, setActivePage] = useState<string>(
-    logicMap.systems[0]?.id || ""
-  );
+  const [activePage, setActivePage] = useState<string>("overview");
 
   // Find the active system (could be top-level or a child)
   let activeSystem: System | null = null;
@@ -68,7 +66,12 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
     <div className="doc-layout">
       {/* Left nav */}
       <nav className="doc-nav">
-        <div className="nav-title">{logicMap.project}</div>
+        <a
+          className={`nav-title ${activePage === "overview" ? "active" : ""}`}
+          onClick={() => setActivePage("overview")}
+        >
+          {logicMap.project}
+        </a>
         <ul>
           {navItems.map((item) => (
             <li key={item.id}>
@@ -89,7 +92,9 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
 
       {/* Page content */}
       <main className="doc-content" key={activePage}>
-        {activeSystem ? (
+        {activePage === "overview" ? (
+          <OverviewPage logicMap={logicMap} onNavigate={setActivePage} />
+        ) : activeSystem ? (
           <SystemPage
             system={activeSystem}
             parent={parentSystem}
@@ -101,6 +106,143 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
         )}
       </main>
     </div>
+  );
+}
+
+/* ---- Overview Page ---- */
+
+function OverviewPage({
+  logicMap,
+  onNavigate,
+}: {
+  logicMap: LogicMap;
+  onNavigate: (id: string) => void;
+}) {
+  // Count totals
+  let totalFunctions = 0;
+  let totalDecisions = 0;
+  let totalRelationships = logicMap.relationships.length;
+
+  const countSystem = (s: System) => {
+    totalFunctions += s.functions.length;
+    for (const fn of s.functions) totalDecisions += fn.decisions.length;
+    for (const c of s.children || []) countSystem(c);
+  };
+  for (const s of logicMap.systems) countSystem(s);
+
+  // Group systems by role
+  const core = logicMap.systems.filter((s) => s.id === "chat_engine");
+  const pipelines = logicMap.systems.filter(
+    (s) => s.id === "email_triage" || s.id === "meeting_review"
+  );
+  const infra = logicMap.systems.filter(
+    (s) => s.id === "auth" || s.id === "database"
+  );
+
+  return (
+    <>
+      <h1>{logicMap.project}</h1>
+      <p className="page-lead">{logicMap.intent}</p>
+      <span className="doc-version">Updated {logicMap.version}</span>
+
+      <div className="overview-stats">
+        <div className="stat">
+          <span className="stat-number">{logicMap.systems.length}</span>
+          <span className="stat-label">systems</span>
+        </div>
+        <div className="stat">
+          <span className="stat-number">{totalFunctions}</span>
+          <span className="stat-label">functions</span>
+        </div>
+        <div className="stat">
+          <span className="stat-number">{totalDecisions}</span>
+          <span className="stat-label">decisions</span>
+        </div>
+        <div className="stat">
+          <span className="stat-number">{totalRelationships}</span>
+          <span className="stat-label">connections</span>
+        </div>
+      </div>
+
+      <section className="overview-group">
+        <h3 className="overview-group-title">
+          <span className="nav-dot" style={{ background: "#3b82f6" }} />
+          Core
+        </h3>
+        <p className="overview-group-desc">
+          The chat engine and its tools - how the team interacts with everything.
+        </p>
+        {core.map((s) => (
+          <div key={s.id}>
+            <OverviewCard system={s} onNavigate={onNavigate} />
+            {s.children && s.children.length > 0 && (
+              <div className="overview-children">
+                {s.children.map((c) => (
+                  <OverviewCardSmall key={c.id} system={c} onNavigate={onNavigate} />
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </section>
+
+      <section className="overview-group">
+        <h3 className="overview-group-title">
+          <span className="nav-dot" style={{ background: "#10b981" }} />
+          Pipelines
+        </h3>
+        <p className="overview-group-desc">
+          Background processing that runs automatically - email filtering and meeting task extraction.
+        </p>
+        {pipelines.map((s) => (
+          <OverviewCard key={s.id} system={s} onNavigate={onNavigate} />
+        ))}
+      </section>
+
+      <section className="overview-group">
+        <h3 className="overview-group-title">
+          <span className="nav-dot" style={{ background: "#8b5cf6" }} />
+          Infrastructure
+        </h3>
+        <p className="overview-group-desc">
+          Authentication and data storage that everything else depends on.
+        </p>
+        {infra.map((s) => (
+          <OverviewCard key={s.id} system={s} onNavigate={onNavigate} />
+        ))}
+      </section>
+    </>
+  );
+}
+
+function OverviewCard({
+  system,
+  onNavigate,
+}: {
+  system: System;
+  onNavigate: (id: string) => void;
+}) {
+  return (
+    <a className="overview-card" onClick={() => onNavigate(system.id)}>
+      <h4>{system.name}</h4>
+      <p>{system.intent}</p>
+      {system.why && <p className="overview-why">{system.why}</p>}
+    </a>
+  );
+}
+
+function OverviewCardSmall({
+  system,
+  onNavigate,
+}: {
+  system: System;
+  onNavigate: (id: string) => void;
+}) {
+  return (
+    <a className="overview-card-sm" onClick={() => onNavigate(system.id)}>
+      <h5>{system.name}</h5>
+      <p>{system.intent}</p>
+    </a>
   );
 }
 
