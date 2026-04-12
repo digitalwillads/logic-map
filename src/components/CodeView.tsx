@@ -29,11 +29,11 @@ export function CodeView({ annotations, onBack, backLabel }: CodeViewProps) {
         <div key={i} className="code-section">
           <div className="code-section-title">{section.title}</div>
           <div className="code-columns">
-            <div className="code-left">
-              <pre><code>{section.code}</code></pre>
-            </div>
             <div className="code-right">
               <p>{section.explanation}</p>
+            </div>
+            <div className="code-left">
+              <pre><code>{section.code}</code></pre>
             </div>
           </div>
         </div>

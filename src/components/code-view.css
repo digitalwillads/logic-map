@@ -50,20 +50,32 @@
 
 .code-columns {
   display: flex;
+  flex-direction: column;
+}
+
+.code-right {
+  padding: 16px 20px;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.code-right p {
+  font-size: 14px;
+  color: #374151;
+  line-height: 1.75;
+  margin: 0;
 }
 
 .code-left {
-  flex: 1;
-  min-width: 0;
   background: #1e293b;
   overflow-x: auto;
 }
 
 .code-left pre {
   margin: 0;
-  padding: 16px;
-  font-size: 12px;
-  line-height: 1.6;
+  padding: 20px;
+  font-size: 12.5px;
+  line-height: 1.65;
   font-family: "SF Mono", "Fira Code", "Consolas", monospace;
   color: #e2e8f0;
   white-space: pre;
@@ -72,19 +84,4 @@
 
 .code-left code {
   font-family: inherit;
-}
-
-.code-right {
-  width: 340px;
-  flex-shrink: 0;
-  padding: 16px 20px;
-  background: #f9fafb;
-  border-left: 1px solid #e5e7eb;
-}
-
-.code-right p {
-  font-size: 13px;
-  color: #374151;
-  line-height: 1.7;
-  margin: 0;
 }
