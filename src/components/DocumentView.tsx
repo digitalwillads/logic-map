@@ -1,6 +1,14 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import type { LogicMap, System } from "../types/logic-map";
+import { ChatMockup, EmailTriageMockup, MeetingReviewMockup } from "./mockups";
 import "./document.css";
+
+// Map function/system IDs to their UI mockups
+const mockupMap: Record<string, () => JSX.Element> = {
+  "chat_engine": ChatMockup,
+  "email_triage.ui": EmailTriageMockup,
+  "meeting_review.ui": MeetingReviewMockup,
+};
 
 interface DocumentViewProps {
   logicMap: LogicMap;
@@ -9,6 +17,12 @@ interface DocumentViewProps {
 export function DocumentView({ logicMap }: DocumentViewProps) {
   // Nav state: which page are we on?
   const [activePage, setActivePage] = useState<string>("overview");
+  const contentRef = useRef<HTMLElement>(null);
+
+  // Scroll content to top when page changes
+  useEffect(() => {
+    contentRef.current?.scrollTo(0, 0);
+  }, [activePage]);
 
   // Find the active system (could be top-level or a child)
   let activeSystem: System | null = null;
@@ -91,7 +105,7 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
       </nav>
 
       {/* Page content */}
-      <main className="doc-content" key={activePage}>
+      <main className="doc-content" key={activePage} ref={contentRef}>
         {activePage === "overview" ? (
           <OverviewPage logicMap={logicMap} onNavigate={setActivePage} />
         ) : activeSystem ? (
@@ -170,7 +184,7 @@ function OverviewPage({
           Core
         </h3>
         <p className="overview-group-desc">
-          The chat engine and its tools - how the team interacts with everything.
+          The chat engine and its integrations - how the team interacts with everything.
         </p>
         {core.map((s) => (
           <div key={s.id}>
@@ -310,6 +324,16 @@ function SystemPage({
         </div>
       )}
 
+      {/* UI Mockup */}
+      {mockupMap[system.id] && (
+        <div className="screenshot-block">{mockupMap[system.id]()}</div>
+      )}
+      {system.screenshot && (
+        <div className="screenshot-block">
+          <img src={system.screenshot} alt={`${system.name} UI`} />
+        </div>
+      )}
+
       {/* History */}
       {system.history && system.history.length > 0 && (
         <CollapsibleSection title="History" defaultOpen={false}>
@@ -364,10 +388,10 @@ function SystemPage({
         </CollapsibleSection>
       )}
 
-      {/* Child systems (tools) */}
+      {/* Child systems (integrations) */}
       {hasChildren && (
         <section className="children-section">
-          <h3 className="section-heading">Tools</h3>
+          <h3 className="section-heading">Integrations</h3>
           <div className="children-grid">
             {system.children!.map((child) => (
               <a
@@ -477,6 +501,14 @@ function FunctionBlock({ fn }: { fn: System["functions"][0] }) {
       </div>
       <p>{fn.description}</p>
       {fn.source && <code className="source-path">{fn.source}</code>}
+      {mockupMap[fn.id] && (
+        <div className="screenshot-block">{mockupMap[fn.id]()}</div>
+      )}
+      {fn.screenshot && (
+        <div className="screenshot-block">
+          <img src={fn.screenshot} alt={`${fn.name} UI`} />
+        </div>
+      )}
       {fn.uncertain && fn.uncertainty_note && (
         <aside className="note-uncertain">{fn.uncertainty_note}</aside>
       )}

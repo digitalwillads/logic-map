@@ -644,6 +644,21 @@
   line-height: 1.55;
 }
 
+/* ---- Screenshots ---- */
+.screenshot-block {
+  margin: 16px 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f9fafb;
+}
+
+.screenshot-block img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
 /* ---- Overview Page ---- */
 .overview-stats {
   display: flex;

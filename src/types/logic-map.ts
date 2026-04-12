@@ -30,6 +30,7 @@ export interface System {
   who?: string;
   limitations?: string[];
   history?: string[];
+  screenshot?: string;
   uncertain?: boolean;
   uncertainty_note?: string;
   invariants?: Invariant[];
@@ -43,6 +44,7 @@ export interface FunctionNode {
   name: string;
   description: string;
   source?: string;
+  screenshot?: string;
   uncertain?: boolean;
   uncertainty_note?: string;
   decisions: Decision[];
