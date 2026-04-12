@@ -1,41 +1,92 @@
-.doc-view {
-  width: 100%;
+/* ---- Layout: sidebar + content ---- */
+.doc-layout {
+  display: flex;
   height: 100vh;
   background: #0b1120;
   color: #cbd5e1;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
-    sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
 
-.doc-scroll {
-  max-width: 760px;
-  margin: 0 auto;
-  padding: 60px 40px 160px;
+/* ---- Left nav ---- */
+.doc-nav {
+  width: 240px;
+  flex-shrink: 0;
+  border-right: 1px solid #1e293b;
+  padding: 24px 0;
   overflow-y: auto;
+  position: sticky;
+  top: 0;
   height: 100vh;
 }
 
-.doc-scroll::-webkit-scrollbar {
-  width: 6px;
+.doc-nav::-webkit-scrollbar { width: 0; }
+
+.nav-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #f1f5f9;
+  padding: 0 20px 20px;
+  border-bottom: 1px solid #1e293b;
+  margin-bottom: 12px;
+  letter-spacing: -0.02em;
 }
-.doc-scroll::-webkit-scrollbar-track {
-  background: transparent;
+
+.doc-nav ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
 }
-.doc-scroll::-webkit-scrollbar-thumb {
-  background: #334155;
-  border-radius: 3px;
+
+.doc-nav li a {
+  display: block;
+  padding: 6px 20px;
+  font-size: 13px;
+  color: #64748b;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: all 0.1s;
+  text-decoration: none;
 }
+
+.doc-nav li a:hover {
+  color: #94a3b8;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.doc-nav li a.active {
+  color: #f1f5f9;
+  border-left-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.06);
+}
+
+.doc-nav li a.indent {
+  padding-left: 36px;
+  font-size: 12px;
+}
+
+/* ---- Main content ---- */
+.doc-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 48px 64px 160px;
+}
+
+.doc-content::-webkit-scrollbar { width: 6px; }
+.doc-content::-webkit-scrollbar-track { background: transparent; }
+.doc-content::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
 
 /* ---- Header ---- */
 .doc-header {
-  margin-bottom: 64px;
+  margin-bottom: 56px;
+  padding-bottom: 32px;
+  border-bottom: 1px solid #1e293b;
 }
 
 .doc-header h1 {
-  font-size: 36px;
+  font-size: 32px;
   font-weight: 700;
   color: #f1f5f9;
-  margin: 0 0 16px 0;
+  margin: 0 0 12px;
   letter-spacing: -0.03em;
 }
 
@@ -43,366 +94,230 @@
   font-size: 16px;
   color: #94a3b8;
   line-height: 1.7;
-  margin: 0 0 16px 0;
-}
-
-.doc-header-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  margin: 0 0 12px;
 }
 
 .doc-version {
   font-size: 12px;
   color: #475569;
-  font-family: "SF Mono", monospace;
 }
 
-.doc-controls {
-  display: flex;
-  gap: 8px;
+/* ---- Sections (top-level systems) ---- */
+.doc-section {
+  margin-bottom: 48px;
+  padding-bottom: 48px;
+  border-bottom: 1px solid #1e293b;
 }
 
-.doc-controls button {
-  background: #1e293b;
-  border: 1px solid #334155;
-  color: #94a3b8;
-  padding: 6px 14px;
-  border-radius: 6px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
+.doc-section:last-child {
+  border-bottom: none;
 }
 
-.doc-controls button:hover {
-  background: #334155;
-  color: #e2e8f0;
-}
-
-/* ---- Chevrons ---- */
-.chevron {
-  color: #475569;
-  font-size: 10px;
-  flex-shrink: 0;
-  width: 16px;
-  transition: color 0.15s;
-}
-
-.chevron.lg {
-  font-size: 12px;
-  margin-top: 2px;
-}
-
-/* ---- Systems (top level) ---- */
-.doc-system {
-  margin-bottom: 32px;
-  border-radius: 12px;
-  border: 1px solid #1e293b;
-  background: #0f172a;
-  overflow: hidden;
-}
-
-.doc-system.expanded {
-  border-color: #334155;
-}
-
-.doc-system-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  padding: 24px 28px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.doc-system-header:hover {
-  background: rgba(255, 255, 255, 0.015);
-}
-
-.doc-system-header h2 {
-  font-size: 22px;
+.doc-section h2 {
+  font-size: 24px;
   font-weight: 600;
   color: #f1f5f9;
-  margin: 0 0 6px 0;
+  margin: 0 0 8px;
   letter-spacing: -0.02em;
 }
 
-.system-intent {
-  font-size: 14px;
+.section-lead {
+  font-size: 15px;
   color: #94a3b8;
-  line-height: 1.6;
-  margin: 0;
+  line-height: 1.7;
+  margin: 0 0 16px;
 }
 
-.doc-system-body {
-  padding: 0 28px 32px 58px;
-}
-
-.system-desc {
+.section-body {
   font-size: 14px;
   color: #64748b;
   line-height: 1.7;
-  margin: 0 0 28px 0;
+  margin: 0 0 24px;
 }
 
-/* ---- Section headers (Rules, Data, Connections, Functions, Tools) ---- */
-h6 {
+/* ---- Sub-headings (Rules, Data, Connections) ---- */
+.doc-section h5,
+.doc-child-section h5 {
   font-size: 11px;
   font-weight: 700;
   color: #475569;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  margin: 0 0 12px 0;
+  margin: 28px 0 10px;
 }
 
-/* ---- Rules (invariants) ---- */
-.doc-rules {
-  margin-bottom: 28px;
+/* ---- Definition lists (rules/invariants) ---- */
+.def-list {
+  margin: 0 0 8px;
 }
 
-.doc-rule {
-  padding: 12px 16px;
-  background: rgba(59, 130, 246, 0.05);
-  border-left: 3px solid #3b82f6;
-  border-radius: 0 8px 8px 0;
-  margin-bottom: 10px;
+.def-list > div {
+  margin-bottom: 12px;
 }
 
-.doc-rule strong {
-  display: block;
-  font-size: 13px;
-  font-weight: 600;
-  color: #e2e8f0;
-  margin-bottom: 4px;
-}
-
-.doc-rule p {
-  font-size: 13px;
-  color: #94a3b8;
-  line-height: 1.6;
-  margin: 0;
-}
-
-/* ---- Data (entities) ---- */
-.doc-data {
-  margin-bottom: 28px;
-}
-
-.doc-entity-inline {
-  padding: 14px 16px;
-  background: #1e293b;
-  border-radius: 8px;
-  margin-bottom: 10px;
-}
-
-.doc-entity-inline strong {
-  display: block;
+.def-list dt {
   font-size: 14px;
   font-weight: 600;
   color: #e2e8f0;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
-.doc-entity-inline > p {
-  font-size: 13px;
-  color: #94a3b8;
-  line-height: 1.6;
-  margin: 0 0 10px 0;
-}
-
-.entity-fields-inline {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.field-tag {
-  font-size: 10.5px;
-  color: #64748b;
-  font-family: "SF Mono", "Fira Code", monospace;
-  background: rgba(0, 0, 0, 0.25);
-  padding: 3px 8px;
-  border-radius: 4px;
-  line-height: 1.4;
-}
-
-/* ---- Connections ---- */
-.doc-connections {
-  margin-bottom: 28px;
-}
-
-.doc-connections h6 {
-  color: #3b82f6;
-}
-
-.connection-line {
-  font-size: 13px;
-  color: #94a3b8;
-  line-height: 1.6;
-  padding: 6px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
-  margin: 0;
-}
-
-.connection-line:last-child {
-  border-bottom: none;
-}
-
-/* ---- Functions ---- */
-.doc-fns {
-  margin-bottom: 28px;
-}
-
-.doc-fn {
-  padding: 16px 20px;
-  background: #1e293b;
-  border: 1px solid #334155;
-  border-radius: 8px;
-  margin-bottom: 10px;
-  transition: border-color 0.15s;
-}
-
-.doc-fn.expanded {
-  border-color: #475569;
-}
-
-.doc-fn.uncertain {
-  border-left: 3px solid #f59e0b;
-}
-
-.doc-fn-header {
-  cursor: pointer;
-}
-
-.doc-fn-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.doc-fn-title h4 {
-  font-size: 15px;
-  font-weight: 600;
-  color: #e2e8f0;
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.doc-fn-header > p {
+.def-list dd {
   font-size: 13px;
   color: #94a3b8;
   line-height: 1.65;
   margin: 0;
 }
 
+/* ---- Entities ---- */
+.entity-block {
+  margin-bottom: 16px;
+}
+
+.entity-block h6 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin: 0 0 4px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.entity-block > p {
+  font-size: 13px;
+  color: #94a3b8;
+  line-height: 1.6;
+  margin: 0 0 8px;
+}
+
+.field-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.field-list code {
+  font-size: 11px;
+  color: #64748b;
+  font-family: "SF Mono", "Fira Code", monospace;
+  background: #1e293b;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+/* ---- Connections ---- */
+.connection-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px;
+}
+
+.connection-list li {
+  font-size: 13px;
+  color: #94a3b8;
+  line-height: 1.6;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.connection-list li:last-child {
+  border-bottom: none;
+}
+
+/* ---- Functions ---- */
+.doc-fn {
+  margin-bottom: 20px;
+}
+
+.doc-fn h4 {
+  font-size: 15px;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin: 0 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.doc-fn > p {
+  font-size: 13px;
+  color: #94a3b8;
+  line-height: 1.65;
+  margin: 0 0 4px;
+}
+
 .source-path {
   display: inline-block;
-  font-size: 10.5px;
+  font-size: 11px;
   color: #475569;
   font-family: "SF Mono", "Fira Code", monospace;
-  margin-top: 8px;
-  background: rgba(0, 0, 0, 0.2);
-  padding: 2px 8px;
-  border-radius: 4px;
+  margin-top: 4px;
 }
 
 /* ---- Decisions ---- */
 .doc-decisions {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  margin-top: 12px;
+  padding-left: 16px;
+  border-left: 2px solid #1e293b;
 }
 
 .doc-dec {
-  padding: 12px 16px;
-  background: rgba(0, 0, 0, 0.15);
-  border-radius: 6px;
-  border-left: 2px solid #475569;
-}
-
-.doc-dec.uncertain {
-  border-left-color: #f59e0b;
+  margin-bottom: 12px;
 }
 
 .doc-dec h5 {
   font-size: 13px;
   font-weight: 600;
   color: #cbd5e1;
-  margin: 0 0 4px 0;
+  margin: 0 0 2px;
   display: flex;
   align-items: center;
   gap: 6px;
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 .doc-dec > p {
-  font-size: 12.5px;
+  font-size: 13px;
   color: #94a3b8;
   line-height: 1.6;
   margin: 0;
 }
 
 .rationale {
-  font-size: 12.5px;
+  font-size: 13px;
   color: #64748b;
   line-height: 1.6;
   font-style: italic;
-  margin: 10px 0 0 0;
-  padding-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  margin: 6px 0 0;
 }
 
-/* ---- Children (tools nested under a system) ---- */
-.doc-children {
-  margin-top: 8px;
+/* ---- Child systems (tools) ---- */
+.doc-children-group {
+  margin-top: 32px;
 }
 
-.doc-child {
-  border: 1px solid #1e293b;
-  border-radius: 8px;
-  margin-bottom: 12px;
-  overflow: hidden;
-  background: rgba(0, 0, 0, 0.1);
+.doc-child-section {
+  margin-bottom: 36px;
+  padding-bottom: 36px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 
-.doc-child.expanded {
-  border-color: #334155;
+.doc-child-section:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
 }
 
-.doc-child-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 16px 20px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.doc-child-header:hover {
-  background: rgba(255, 255, 255, 0.015);
-}
-
-.doc-child-header h4 {
-  font-size: 16px;
+.doc-child-section h3 {
+  font-size: 18px;
   font-weight: 600;
-  color: #e2e8f0;
-  margin: 0 0 4px 0;
+  color: #f1f5f9;
+  margin: 0 0 6px;
+  letter-spacing: -0.01em;
 }
 
-.doc-child-header p {
-  font-size: 13px;
-  color: #94a3b8;
-  line-height: 1.55;
-  margin: 0;
-}
-
-.doc-child-body {
-  padding: 0 20px 20px 46px;
+.doc-child-section > .section-lead {
+  font-size: 14px;
 }
 
 /* ---- Uncertainty ---- */
@@ -410,22 +325,20 @@ h6 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   background: #f59e0b;
   color: white;
   border-radius: 50%;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
 }
 
 .note-uncertain {
-  font-size: 12px;
+  font-size: 13px;
   color: #f59e0b;
-  background: rgba(245, 158, 11, 0.07);
-  border: 1px solid rgba(245, 158, 11, 0.12);
-  border-radius: 6px;
-  padding: 8px 12px;
-  margin-top: 10px;
+  margin-top: 6px;
+  padding-left: 12px;
+  border-left: 2px solid rgba(245, 158, 11, 0.3);
   line-height: 1.55;
 }

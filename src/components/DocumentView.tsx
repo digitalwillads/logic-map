@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import type { LogicMap, System } from "../types/logic-map";
 import "./document.css";
 
@@ -7,206 +7,170 @@ interface DocumentViewProps {
 }
 
 export function DocumentView({ logicMap }: DocumentViewProps) {
-  const [expandedSystems, setExpandedSystems] = useState<Set<string>>(
-    new Set(logicMap.systems.map((s) => s.id))
+  const [activeId, setActiveId] = useState<string>(
+    logicMap.systems[0]?.id || ""
   );
-  const [expandedChildren, setExpandedChildren] = useState<Set<string>>(
-    new Set()
-  );
-  const [expandedFunctions, setExpandedFunctions] = useState<Set<string>>(
-    new Set()
-  );
+  const contentRef = useRef<HTMLDivElement>(null);
 
-  const toggle = (
-    set: Set<string>,
-    setter: React.Dispatch<React.SetStateAction<Set<string>>>,
-    id: string
-  ) => {
-    setter((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  // Track which section is visible as user scrolls
+  useEffect(() => {
+    const container = contentRef.current;
+    if (!container) return;
 
-  const expandAll = () => {
-    const allSystems = new Set(logicMap.systems.map((s) => s.id));
-    const allChildren = new Set<string>();
-    const allFns = new Set<string>();
-    for (const s of logicMap.systems) {
-      for (const f of s.functions) allFns.add(f.id);
-      for (const c of s.children || []) {
-        allChildren.add(c.id);
-        for (const f of c.functions) allFns.add(f.id);
-      }
-    }
-    setExpandedSystems(allSystems);
-    setExpandedChildren(allChildren);
-    setExpandedFunctions(allFns);
-  };
-
-  const collapseAll = () => {
-    setExpandedSystems(new Set());
-    setExpandedChildren(new Set());
-    setExpandedFunctions(new Set());
-  };
-
-  const renderFunction = (fn: System["functions"][0]) => {
-    const isExpanded = expandedFunctions.has(fn.id);
-    const hasDecisions = fn.decisions.length > 0;
-
-    return (
-      <div
-        key={fn.id}
-        className={`doc-fn ${isExpanded ? "expanded" : ""} ${fn.uncertain ? "uncertain" : ""}`}
-      >
-        <div
-          className="doc-fn-header"
-          onClick={() =>
-            hasDecisions &&
-            toggle(expandedFunctions, setExpandedFunctions, fn.id)
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            setActiveId(entry.target.id);
           }
-          style={{ cursor: hasDecisions ? "pointer" : "default" }}
-        >
-          <div className="doc-fn-title">
-            {hasDecisions && (
-              <span className="chevron">{isExpanded ? "\u25BC" : "\u25B6"}</span>
-            )}
-            <h4>
-              {fn.name}
-              {fn.uncertain && <span className="badge-uncertain">?</span>}
-            </h4>
-          </div>
-          <p>{fn.description}</p>
-          {fn.source && <code className="source-path">{fn.source}</code>}
-        </div>
-
-        {fn.uncertain && fn.uncertainty_note && (
-          <div className="note-uncertain">{fn.uncertainty_note}</div>
-        )}
-
-        {isExpanded && hasDecisions && (
-          <div className="doc-decisions">
-            {fn.decisions.map((dec) => (
-              <div
-                key={dec.id}
-                className={`doc-dec ${dec.uncertain ? "uncertain" : ""}`}
-              >
-                <h5>
-                  {dec.name}
-                  {dec.uncertain && <span className="badge-uncertain">?</span>}
-                </h5>
-                <p>{dec.description}</p>
-                {dec.rationale && (
-                  <p className="rationale">
-                    <strong>Why:</strong> {dec.rationale}
-                  </p>
-                )}
-                {dec.source && <code className="source-path">{dec.source}</code>}
-                {dec.uncertain && dec.uncertainty_note && (
-                  <div className="note-uncertain">{dec.uncertainty_note}</div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+        }
+      },
+      { root: container, rootMargin: "-20% 0px -70% 0px", threshold: 0 }
     );
-  };
+
+    const sections = container.querySelectorAll("[data-nav-id]");
+    sections.forEach((el) => observer.observe(el));
+
+    return () => observer.disconnect();
+  }, [logicMap]);
+
+  const scrollTo = useCallback((id: string) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, []);
+
+  const renderFunction = (fn: System["functions"][0]) => (
+    <div key={fn.id} className="doc-fn">
+      <h4>
+        {fn.name}
+        {fn.uncertain && <span className="badge-uncertain">?</span>}
+      </h4>
+      <p>{fn.description}</p>
+      {fn.source && <code className="source-path">{fn.source}</code>}
+      {fn.uncertain && fn.uncertainty_note && (
+        <aside className="note-uncertain">{fn.uncertainty_note}</aside>
+      )}
+      {fn.decisions.length > 0 && (
+        <div className="doc-decisions">
+          {fn.decisions.map((dec) => (
+            <div key={dec.id} className="doc-dec">
+              <h5>
+                {dec.name}
+                {dec.uncertain && <span className="badge-uncertain">?</span>}
+              </h5>
+              <p>{dec.description}</p>
+              {dec.rationale && (
+                <p className="rationale">
+                  <strong>Why:</strong> {dec.rationale}
+                </p>
+              )}
+              {dec.source && <code className="source-path">{dec.source}</code>}
+              {dec.uncertain && dec.uncertainty_note && (
+                <aside className="note-uncertain">{dec.uncertainty_note}</aside>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 
   const renderChildSystem = (child: System) => {
-    const isExpanded = expandedChildren.has(child.id);
-    const hasInvariants = child.invariants && child.invariants.length > 0;
-    const hasEntities = child.entities && child.entities.length > 0;
     const relatedEdges = logicMap.relationships.filter(
       (r) => r.from.startsWith(child.id) || r.to.startsWith(child.id)
     );
 
     return (
-      <div
-        key={child.id}
-        className={`doc-child ${isExpanded ? "expanded" : ""}`}
-      >
-        <div
-          className="doc-child-header"
-          onClick={() =>
-            toggle(expandedChildren, setExpandedChildren, child.id)
-          }
-        >
-          <span className="chevron">{isExpanded ? "\u25BC" : "\u25B6"}</span>
-          <div>
-            <h4>{child.name}</h4>
-            <p>{child.intent}</p>
-          </div>
-        </div>
+      <div key={child.id} id={child.id} data-nav-id className="doc-child-section">
+        <h3>{child.name}</h3>
+        <p className="section-lead">{child.intent}</p>
 
-        {isExpanded && (
-          <div className="doc-child-body">
-            {hasInvariants && (
-              <div className="doc-rules">
-                <h6>Rules</h6>
-                {child.invariants!.map((inv) => (
-                  <div key={inv.id} className="doc-rule">
-                    <strong>{inv.name}</strong>
-                    <p>{inv.description}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {hasEntities && (
-              <div className="doc-data">
-                <h6>Data</h6>
-                {child.entities!.map((entity) => (
-                  <div key={entity.id} className="doc-entity-inline">
-                    <strong>{entity.name}</strong>
-                    <p>{entity.description}</p>
-                    <div className="entity-fields-inline">
-                      {entity.key_fields.map((f, i) => (
-                        <span key={i} className="field-tag">{f}</span>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {relatedEdges.length > 0 && (
-              <div className="doc-connections">
-                <h6>Connections</h6>
-                {relatedEdges.map((rel, i) => (
-                  <p key={i} className="connection-line">{rel.description}</p>
-                ))}
-              </div>
-            )}
-
-            <div className="doc-fns">
-              {child.functions.map(renderFunction)}
-            </div>
-          </div>
+        {child.invariants && child.invariants.length > 0 && (
+          <>
+            <h5>Rules</h5>
+            <dl className="def-list">
+              {child.invariants.map((inv) => (
+                <div key={inv.id}>
+                  <dt>{inv.name}</dt>
+                  <dd>{inv.description}</dd>
+                </div>
+              ))}
+            </dl>
+          </>
         )}
+
+        {child.entities && child.entities.length > 0 && (
+          <>
+            <h5>Data</h5>
+            {child.entities.map((entity) => (
+              <div key={entity.id} className="entity-block">
+                <h6>{entity.name}</h6>
+                <p>{entity.description}</p>
+                <div className="field-list">
+                  {entity.key_fields.map((f, i) => (
+                    <code key={i}>{f}</code>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+
+        {relatedEdges.length > 0 && (
+          <>
+            <h5>Connections</h5>
+            <ul className="connection-list">
+              {relatedEdges.map((rel, i) => (
+                <li key={i}>{rel.description}</li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {child.functions.map(renderFunction)}
       </div>
     );
   };
 
+  // Build nav items
+  const navItems: { id: string; label: string; indent: boolean }[] = [];
+  for (const system of logicMap.systems) {
+    navItems.push({ id: system.id, label: system.name, indent: false });
+    for (const child of system.children || []) {
+      navItems.push({ id: child.id, label: child.name, indent: true });
+    }
+  }
+
   return (
-    <div className="doc-view">
-      <div className="doc-scroll">
+    <div className="doc-layout">
+      {/* Left nav */}
+      <nav className="doc-nav">
+        <div className="nav-title">{logicMap.project}</div>
+        <ul>
+          {navItems.map((item) => (
+            <li key={item.id}>
+              <a
+                className={`${item.indent ? "indent" : ""} ${activeId === item.id ? "active" : ""}`}
+                onClick={() => scrollTo(item.id)}
+              >
+                {item.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </nav>
+
+      {/* Main content */}
+      <main className="doc-content" ref={contentRef}>
         <header className="doc-header">
           <h1>{logicMap.project}</h1>
           <p className="doc-intent">{logicMap.intent}</p>
-          <div className="doc-header-meta">
-            <span className="doc-version">v{logicMap.version}</span>
-            <div className="doc-controls">
-              <button onClick={expandAll}>Expand All</button>
-              <button onClick={collapseAll}>Collapse All</button>
-            </div>
-          </div>
+          <span className="doc-version">Updated {logicMap.version}</span>
         </header>
 
         {logicMap.systems.map((system) => {
-          const isExpanded = expandedSystems.has(system.id);
           const hasInvariants = system.invariants && system.invariants.length > 0;
           const hasEntities = system.entities && system.entities.length > 0;
           const hasChildren = system.children && system.children.length > 0;
@@ -216,90 +180,64 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
           );
 
           return (
-            <section
-              key={system.id}
-              className={`doc-system ${isExpanded ? "expanded" : ""}`}
-            >
-              <div
-                className="doc-system-header"
-                onClick={() =>
-                  toggle(expandedSystems, setExpandedSystems, system.id)
-                }
-              >
-                <span className="chevron lg">
-                  {isExpanded ? "\u25BC" : "\u25B6"}
-                </span>
-                <div>
-                  <h2>{system.name}</h2>
-                  <p className="system-intent">{system.intent}</p>
-                </div>
-              </div>
+            <section key={system.id} id={system.id} data-nav-id className="doc-section">
+              <h2>{system.name}</h2>
+              <p className="section-lead">{system.intent}</p>
+              <p className="section-body">{system.description}</p>
 
-              {isExpanded && (
-                <div className="doc-system-body">
-                  <p className="system-desc">{system.description}</p>
+              {hasInvariants && (
+                <>
+                  <h5>Rules</h5>
+                  <dl className="def-list">
+                    {system.invariants!.map((inv) => (
+                      <div key={inv.id}>
+                        <dt>{inv.name}</dt>
+                        <dd>{inv.description}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </>
+              )}
 
-                  {hasInvariants && (
-                    <div className="doc-rules">
-                      <h6>Rules</h6>
-                      {system.invariants!.map((inv) => (
-                        <div key={inv.id} className="doc-rule">
-                          <strong>{inv.name}</strong>
-                          <p>{inv.description}</p>
-                        </div>
-                      ))}
+              {hasEntities && (
+                <>
+                  <h5>Data</h5>
+                  {system.entities!.map((entity) => (
+                    <div key={entity.id} className="entity-block">
+                      <h6>{entity.name}</h6>
+                      <p>{entity.description}</p>
+                      <div className="field-list">
+                        {entity.key_fields.map((f, i) => (
+                          <code key={i}>{f}</code>
+                        ))}
+                      </div>
                     </div>
-                  )}
+                  ))}
+                </>
+              )}
 
-                  {hasEntities && (
-                    <div className="doc-data">
-                      <h6>Data</h6>
-                      {system.entities!.map((entity) => (
-                        <div key={entity.id} className="doc-entity-inline">
-                          <strong>{entity.name}</strong>
-                          <p>{entity.description}</p>
-                          <div className="entity-fields-inline">
-                            {entity.key_fields.map((f, i) => (
-                              <span key={i} className="field-tag">{f}</span>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+              {relatedEdges.length > 0 && (
+                <>
+                  <h5>Connections</h5>
+                  <ul className="connection-list">
+                    {relatedEdges.map((rel, i) => (
+                      <li key={i}>{rel.description}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
 
-                  {relatedEdges.length > 0 && (
-                    <div className="doc-connections">
-                      <h6>Connections</h6>
-                      {relatedEdges.map((rel, i) => (
-                        <p key={i} className="connection-line">
-                          {rel.description}
-                        </p>
-                      ))}
-                    </div>
-                  )}
+              {system.functions.map(renderFunction)}
 
-                  {/* Core functions of this system */}
-                  {system.functions.length > 0 && (
-                    <div className="doc-fns">
-                      <h6>Functions</h6>
-                      {system.functions.map(renderFunction)}
-                    </div>
-                  )}
-
-                  {/* Child systems (tools) */}
-                  {hasChildren && (
-                    <div className="doc-children">
-                      <h6>Tools</h6>
-                      {system.children!.map(renderChildSystem)}
-                    </div>
-                  )}
+              {hasChildren && (
+                <div className="doc-children-group">
+                  {system.children!.map(renderChildSystem)}
                 </div>
               )}
             </section>
           );
         })}
-      </div>
+      </main>
     </div>
   );
 }
