@@ -17,7 +17,7 @@ import {
 import "./document.css";
 
 // Map function/system IDs to their UI mockups
-const mockupMap: Record<string, () => JSX.Element> = {
+const mockupMap: Record<string, () => React.ReactElement> = {
   "chat_engine": ChatMockup,
   "email_triage.ui": EmailTriageMockup,
   "meeting_review.ui": MeetingReviewMockup,
@@ -677,6 +677,8 @@ function EntityBlock({
 
 /* ---- Function Block ---- */
 
+// @ts-expect-error kept for future use
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function FunctionBlock({ fn }: { fn: System["functions"][0] }) {
   const [showDecisions, setShowDecisions] = useState(false);
   const hasDecisions = fn.decisions.length > 0;
