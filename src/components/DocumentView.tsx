@@ -7,12 +7,12 @@ import {
   chatEndpoint, toolExecutor, claudeClient, toolDefinitions,
   meetingPipeline, meetingPolling, meetingChatEndpoint,
   gmailClient, gmailTools, calendarClient, calendarTools,
-  recorderTools, chadAdsTools, tasksTools, stripeTools,
+  recorderTools, chadAdsTools, tasksTools, tasksClient, stripeTools,
   adminDelegation, authOauth,
-  mainServer,
+  mainServer, databaseLayer,
   emailTriageUI, emailAPI,
   meetingReviewUI, meetingAPI,
-  chatPage, chatBox,
+  chatPage, chatBox, chatBoxServer,
 } from "../data/code-annotations";
 import "./document.css";
 
@@ -31,8 +31,10 @@ const codeMap: Record<string, { label: string; annotation: CodeAnnotation }[]> =
     { label: "claude_client.rs - API request construction", annotation: claudeClient },
     { label: "tools/mod.rs - Tool definitions and admin gating", annotation: toolDefinitions },
     { label: "chat_box.rs - Chat UI and SSE handling", annotation: chatBox },
+    { label: "chat_box.rs - Server functions (save, title, start)", annotation: chatBoxServer },
     { label: "chat_page.rs - Tab management and badge polling", annotation: chatPage },
     { label: "main.rs - Server setup and background tasks", annotation: mainServer },
+    { label: "database.rs - All persistence operations (47 functions)", annotation: databaseLayer },
   ],
   "auth": [
     { label: "oauth.rs - Login flow, token refresh, scope management", annotation: authOauth },
@@ -53,24 +55,25 @@ const codeMap: Record<string, { label: string; annotation: CodeAnnotation }[]> =
     { label: "meeting_api.rs - Meeting queue and task approval server functions", annotation: meetingAPI },
   ],
   "gmail": [
-    { label: "tools/gmail.rs - Search, send, reply, draft tools", annotation: gmailTools },
-    { label: "client.rs - Gmail API client and MIME parsing", annotation: gmailClient },
+    { label: "tools/gmail.rs - Search, send, reply, draft tools (9 functions)", annotation: gmailTools },
+    { label: "client.rs - Gmail API client and MIME parsing (15 functions)", annotation: gmailClient },
   ],
   "calendar": [
-    { label: "client.rs - Calendar API client", annotation: calendarClient },
-    { label: "tools/calendar.rs - Timezone handling and event formatting", annotation: calendarTools },
+    { label: "client.rs - Calendar API client (8 functions)", annotation: calendarClient },
+    { label: "tools/calendar.rs - Timezone handling and event formatting (7 functions)", annotation: calendarTools },
   ],
   "recorder": [
-    { label: "tools/recorder.rs - Recording search and transcripts", annotation: recorderTools },
+    { label: "tools/recorder.rs - Recording search and transcripts (6 functions)", annotation: recorderTools },
   ],
   "chad_ads": [
-    { label: "tools/chad_ads.rs - Google Ads conversational interface", annotation: chadAdsTools },
+    { label: "tools/chad_ads.rs - Google Ads conversational interface (3 functions)", annotation: chadAdsTools },
   ],
   "google_tasks": [
-    { label: "tools/tasks.rs - Google Tasks management", annotation: tasksTools },
+    { label: "tools/tasks.rs - Google Tasks tool handlers (12 functions)", annotation: tasksTools },
+    { label: "tasks/client.rs - Google Tasks API client (12 functions)", annotation: tasksClient },
   ],
   "stripe": [
-    { label: "tools/stripe.rs - Stripe billing queries", annotation: stripeTools },
+    { label: "tools/stripe.rs - Stripe billing queries (5 functions)", annotation: stripeTools },
   ],
 };
 

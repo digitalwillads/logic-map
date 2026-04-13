@@ -603,6 +603,35 @@ fn extract_parts_recursive(parts: &[GmailPart]) -> (Vec<String>, Vec<String>) {
 }`,
       explanation: "Gmail stores email bodies as nested MIME structures - a single email might have a text/plain part, an HTML part, and attachments, all nested inside multipart/alternative containers. This code walks the tree recursively, collecting all text/plain and text/html parts. It prefers text/plain because that's what Claude works best with - HTML markup just adds noise. The base64url decoding handles Gmail's encoding format.",
     },
+    {
+      title: "Remaining client methods - threads, labels, category filtering",
+      code: `pub async fn get_thread(&self, thread_id: &str) -> Result<GmailThread, String> {
+    // Fetches all messages in a thread with format=full
+    // Returns them in chronological order
+}
+
+pub async fn list_messages_by_labels(
+    &self, label_ids: &[&str], query: Option<&str>, max_results: u32,
+) -> Result<GmailMessageList, String> {
+    // Queries Gmail with label filters (INBOX, UNREAD, CATEGORY_PRIMARY, etc.)
+    // Used by email polling (INBOX + UNREAD) and category search
+}
+
+pub async fn list_labels(&self) -> Result<Vec<GmailLabel>, String> {
+    // Lists all Gmail labels for the user
+}
+
+pub fn parse_email(message: &GmailMessage) -> ParsedEmail {
+    // Extracts From, To, Subject, Date headers + body into a clean struct
+    // Single entry point for turning raw Gmail API response into readable data
+}
+
+pub fn base64url_encode(data: &str) -> String {
+    // Encodes string as base64url (Gmail's format: no padding, - and _ instead of + and /)
+    // Used before sending messages to Gmail API
+}`,
+      explanation: "The remaining Gmail client methods. get_thread fetches an entire email conversation. list_messages_by_labels is used by both the email polling loop (filtering to INBOX + UNREAD) and category-based searches (CATEGORY_PRIMARY, etc.). parse_email is the universal translator from Gmail's raw API format to a clean struct. base64url_encode handles Gmail's non-standard base64 variant (no padding, URL-safe characters).",
+    },
   ],
 };
 
@@ -703,6 +732,46 @@ export const gmailTools: CodeAnnotation = {
     client.send_reply(&raw, thread_id).await
 }`,
       explanation: "Replying requires fetching the original message to extract its Message-ID and References headers. These are critical for email threading - without them, the reply shows up as a new conversation in every email client. The References header is built by appending the original's Message-ID to the existing References chain (per RFC 5322). The subject gets 'Re: ' prepended only if it's not already there. The same confirmation gate applies.",
+    },
+    {
+      title: "Remaining Gmail tools - read, thread, reply-all, draft",
+      code: `pub async fn get_email(client: &GmailClient, message_id: &str, user_email: &str) -> ToolResult {
+    // Fetches full email body, parses MIME, returns formatted with link
+}
+
+pub async fn list_recent_emails(client: &GmailClient, max_results: u32, ...) -> ToolResult {
+    // Same as search_emails but with empty query - returns latest inbox messages
+}
+
+pub async fn search_emails_by_sender(client: &GmailClient, sender: &str, ...) -> ToolResult {
+    // Wraps search_emails with "from:{sender}" query
+}
+
+pub async fn get_email_thread(client: &GmailClient, thread_id: &str, ...) -> ToolResult {
+    // Fetches ALL messages in a thread, returns them in chronological order
+    // Each message gets full body parsing
+}
+
+pub async fn reply_all(
+    client: &GmailClient, user_email: &str, message_id: &str, thread_id: &str,
+    body: &str, user_confirmed: bool,
+) -> ToolResult {
+    // Same as reply_to_email but extracts ALL recipients (To + Cc) from original
+    // Removes the user's own email from the recipient list to avoid self-reply
+    // Same confirmation gate applies
+}
+
+pub async fn save_draft(
+    client: &GmailClient, user_email: &str,
+    to: &[String], cc: &[String], bcc: &[String],
+    subject: &str, body: &str,
+    in_reply_to: Option<&str>, references: Option<&str>,
+) -> ToolResult {
+    // Builds RFC 2822 message and saves as draft (not sent)
+    // Supports threading headers for reply drafts
+    // No user_confirmed gate - drafts are safe to create without confirmation
+}`,
+      explanation: "The remaining Gmail tools are mostly thin wrappers. get_email fetches one email with full body parsing. list_recent_emails and search_emails_by_sender are convenience wrappers around search_emails. get_email_thread fetches all messages in a conversation. reply_all is like reply_to_email but extracts all original recipients and removes the user's own email to avoid self-reply. save_draft creates a draft without sending - no confirmation needed since drafts are safe.",
     },
   ],
 };
@@ -816,6 +885,27 @@ fn format_ms(ms: Option<i64>) -> String {
     ))
 }`,
       explanation: "The most common path for finding transcripts: user mentions a meeting, Claude looks up the calendar event, then uses the event ID to find the linked recording. Two API calls chained together. Picks the first recording that has a transcript (some recordings may still be processing). Returns the transcript with metadata so Claude has the full picture - who was there, how long it was, and what was said.",
+    },
+    {
+      title: "Remaining recorder tools - date search and transcript search",
+      code: `pub async fn search_recordings_by_date(
+    client: &RecorderClient, date: &str, timezone: Option<&str>,
+    user_email: Option<&str>,
+) -> ToolResult {
+    let recordings = client.search_by_date(date, timezone).await?;
+    // Filters to user's recordings if not admin
+    // Returns list with meeting name, date, duration, attendees
+}
+
+pub async fn search_transcripts(
+    client: &RecorderClient, query: &str, recording_id: Option<&str>,
+) -> ToolResult {
+    let results = client.search_transcripts(query, recording_id).await?;
+    // Full-text search across transcript content
+    // Returns matches with speaker, timestamp ranges, and highlighted text
+    // Strips HTML <b></b> tags from highlighted results
+}`,
+      explanation: "search_recordings_by_date finds recordings from a specific day - useful when the user says 'what meetings did I have on Tuesday?' without naming a specific meeting. search_transcripts is the last resort in the fallback chain - full-text search across all transcript content for when you can't find a recording by event ID or participant. It searches the spoken words themselves, so 'find the meeting where we discussed the Q2 budget' can find it even without knowing who was there.",
     },
   ],
 };
@@ -1066,6 +1156,57 @@ fn format_amount(cents: i64, currency: &Currency) -> String {
     }
 }`,
       explanation: "Admin-only tool for querying Stripe invoices. Supports filtering by customer, status, and date range. The date range uses Stripe's RangeQuery with inclusive end-of-day handling (if you ask for invoices through April 12, it includes the whole day, not just midnight). Currency formatting handles both normal currencies (divide by 100 for dollars) and zero-decimal currencies like JPY where the amount is already in the base unit.",
+    },
+    {
+      title: "Customer and subscription listing",
+      code: `pub async fn list_customers(
+    client: &stripe::Client,
+    email: Option<&str>, name: Option<&str>,
+    limit: i64, starting_after: Option<&str>,
+    created_after: Option<&str>, created_before: Option<&str>,
+) -> ToolResult {
+    // Server-side email filter (Stripe supports this)
+    // Client-side name filter (Stripe has no server-side name search)
+    let filtered = customers.iter()
+        .filter(|c| name.map_or(true, |n| c.name.contains(n)))
+        .collect();
+}
+
+pub async fn list_subscriptions(
+    client: &stripe::Client,
+    customer_id: Option<&str>, status: Option<&str>,
+    limit: i64, starting_after: Option<&str>,
+) -> ToolResult {
+    // Filters by customer and status
+    // Parses status string to Stripe enum (active, past_due, canceled, etc.)
+    // Walks subscription items showing plan name, price, quantity, interval
+}`,
+      explanation: "list_customers supports email filter server-side (Stripe's API handles this) but name filtering is done client-side because Stripe doesn't have a name search endpoint. list_subscriptions shows each subscription's plan details including price, billing interval, and quantity. Both support pagination via starting_after for large result sets.",
+    },
+    {
+      title: "Charges and disputes",
+      code: `pub async fn list_charges(
+    client: &stripe::Client,
+    customer_id: Option<&str>,
+    date_from: Option<&str>, date_to: Option<&str>,
+    limit: i64, starting_after: Option<&str>,
+) -> ToolResult {
+    // Shows refund status (full vs partial)
+    // Shows dispute flag if applicable
+    // Includes failure_code and failure_message if charge failed
+    // Displays outcome (seller_message and risk_level)
+}
+
+pub async fn list_disputes(
+    client: &stripe::Client,
+    charge_id: Option<&str>, payment_intent_id: Option<&str>,
+    limit: i64,
+) -> ToolResult {
+    // Filters by charge or payment intent
+    // Shows evidence_details: has_evidence, past_due, due_by
+    // Shows is_charge_refundable flag
+}`,
+      explanation: "list_charges includes detailed status for each charge: whether it was refunded (and if partially), whether there's a dispute, and if it failed, the specific failure code and message. The outcome field shows Stripe's risk assessment. list_disputes shows the evidence submission status (whether evidence has been submitted, whether the deadline has passed) and whether the disputed charge can still be refunded.",
     },
   ],
 };
@@ -1416,6 +1557,27 @@ pub fn date_to_rfc3339_end_inclusive(date: &str, tz_offset: &str) -> String {
     // Format and return filtered results
 }`,
       explanation: "Finding events with a specific person uses two phases because the Calendar API's search is fuzzy - it matches against event titles and descriptions too, not just attendees. Phase 1 uses the API's 'q' parameter for a broad server-side search. Phase 2 filters client-side to only events where the person is actually an attendee or organizer. The case-insensitive contains match handles variations like 'Sarah' matching 'Sarah Chen <sarah@nzymes.com>'.",
+    },
+    {
+      title: "Remaining calendar tools - list calendars, single event lookup",
+      code: `pub async fn list_calendars(client: &CalendarClient, ...) -> ToolResult {
+    let calendars = client.list_calendars().await?;
+    // Categorizes by visibility: visible (checked), unchecked, hidden
+    let visible: Vec<_> = calendars.iter().filter(|c| c.selected && !c.hidden).collect();
+    let unchecked: Vec<_> = calendars.iter().filter(|c| !c.selected && !c.hidden).collect();
+    let hidden: Vec<_> = calendars.iter().filter(|c| c.hidden).collect();
+    // Formats each with name, ID, and visibility status
+}
+
+pub async fn get_calendar_event(
+    client: &CalendarClient, calendar_id: &str, event_id: &str, ...,
+) -> ToolResult {
+    let event = client.get_event(calendar_id, event_id).await?;
+    // Formats with: title, time, location, Meet link, organizer,
+    // all attendees with response status (accepted/declined/tentative),
+    // and full description if verbose mode enabled
+}`,
+      explanation: "list_calendars shows all the user's calendars grouped by visibility - useful when Claude needs to know which calendars to search. get_calendar_event returns full details for a single event including attendees with their RSVP status, Google Meet link (extracted from hangout_link or conference_data), and the event description. Both are read-only operations.",
     },
   ],
 };
@@ -1841,6 +2003,224 @@ fn stop_message() {
     // Mark pending tool calls as "Interrupted"
 }`,
       explanation: "The main chat UI handles the full lifecycle: composing messages (text + pasted images), creating threads on first message, triggering server-side generation, and subscribing to the SSE stream for real-time updates. Streaming text accumulates in a separate signal (streaming_text) to avoid DOM thrashing - it's only merged into the message list when the stream completes. The stop button cancels gracefully by marking pending tool calls as 'Interrupted' so the user knows what was in progress. Thread titles are auto-generated from the first 40 characters of the first message.",
+    },
+  ],
+};
+
+// ============================================================
+// TASKS API CLIENT
+// ============================================================
+
+export const tasksClient: CodeAnnotation = {
+  file: "src/tasks/client.rs",
+  sections: [
+    {
+      title: "Google Tasks API client - full CRUD",
+      code: `pub struct TasksClient {
+    client: reqwest::Client,
+    access_token: String,
+}
+
+impl TasksClient {
+    pub async fn list_task_lists(&self) -> Result<Vec<TaskList>, String> {
+        // GET /tasks/v1/users/@me/lists with pagination (maxResults=100)
+    }
+    pub async fn create_task_list(&self, title: &str) -> Result<TaskList, String> {
+        // POST /tasks/v1/users/@me/lists
+    }
+    pub async fn update_task_list(&self, list_id: &str, title: &str) -> Result<(), String> {
+        // PATCH /tasks/v1/users/@me/lists/{list_id}
+    }
+    pub async fn delete_task_list(&self, list_id: &str) -> Result<(), String> {
+        // DELETE /tasks/v1/users/@me/lists/{list_id}
+    }
+    pub async fn list_tasks(
+        &self, list_id: &str, show_completed: bool,
+        due_min: Option<&str>, due_max: Option<&str>,
+        completed_min: Option<&str>, completed_max: Option<&str>,
+    ) -> Result<Vec<Task>, String> {
+        // GET /tasks/v1/lists/{list_id}/tasks with filters and pagination
+        // showCompleted, showHidden, dueMin, dueMax, completedMin, completedMax
+    }
+    pub async fn get_task(&self, list_id: &str, task_id: &str) -> Result<Task, String> {
+        // GET /tasks/v1/lists/{list_id}/tasks/{task_id}
+    }
+    pub async fn create_task(
+        &self, list_id: &str, title: &str, notes: Option<&str>,
+        due: Option<&str>, parent: Option<&str>, previous: Option<&str>,
+    ) -> Result<Task, String> {
+        // POST /tasks/v1/lists/{list_id}/tasks
+        // parent: nest under another task, previous: insert after this task
+    }
+    pub async fn update_task(
+        &self, list_id: &str, task_id: &str,
+        title: Option<&str>, notes: Option<&str>, due: Option<&str>,
+    ) -> Result<Task, String> {
+        // PATCH /tasks/v1/lists/{list_id}/tasks/{task_id}
+        // Only sends fields that are Some (partial update)
+    }
+    pub async fn complete_task(&self, list_id: &str, task_id: &str) -> Result<(), String> {
+        // PATCH with status: "completed"
+    }
+    pub async fn delete_task(&self, list_id: &str, task_id: &str) -> Result<(), String> {
+        // DELETE /tasks/v1/lists/{list_id}/tasks/{task_id}
+    }
+    pub async fn move_task(
+        &self, list_id: &str, task_id: &str,
+        dest_list: Option<&str>, parent: Option<&str>, previous: Option<&str>,
+    ) -> Result<Task, String> {
+        // POST /tasks/v1/lists/{list_id}/tasks/{task_id}/move
+        // Can move between lists, nest under parent, or reorder
+    }
+}`,
+      explanation: "The low-level HTTP client for Google Tasks API. Each method maps to one API endpoint. list_tasks supports 6 optional filters (show completed, date ranges for due and completion). create_task supports nesting (parent) and ordering (previous). move_task can relocate tasks between lists, nest them, or reorder them. All methods handle pagination, error responses, and bearer token auth. This client is used by both the chat tools (tools/tasks.rs) and the meeting review pipeline (for creating tasks from extracted action items).",
+    },
+  ],
+};
+
+// ============================================================
+// DATABASE LAYER
+// ============================================================
+
+export const databaseLayer: CodeAnnotation = {
+  file: "src/database.rs",
+  sections: [
+    {
+      title: "User and session management (7 functions)",
+      code: `pub fn upsert_user(conn, google_sub, email, name, picture_url, is_admin) -> Result<i32> {
+    // Find by google_sub, update if exists, insert if new
+    // Returns user_id
+}
+pub fn store_auth_token(conn, user_id) -> Result<String> {
+    // Generates UUID, inserts into auth_tokens, returns token string
+}
+pub fn verify_auth_token(conn, token) -> Result<Option<UserInfo>> {
+    // Joins auth_tokens with users table, returns user info if valid
+}
+pub fn store_google_tokens(conn, user_id, access_token, refresh_token, scopes) {
+    // SQLite REPLACE INTO (upsert by user_id unique constraint)
+}
+pub fn get_google_tokens(conn, user_id) -> Result<Option<GoogleToken>> { /* ... */ }
+pub fn update_access_token(conn, user_id, new_token) { /* updates only access_token */ }
+pub fn get_user_by_id(conn, user_id) -> Result<Option<User>> { /* ... */ }`,
+      explanation: "Core identity layer. upsert_user is called on every login to keep profile data fresh. store_auth_token generates a UUID session token. verify_auth_token is called on every API request to authenticate. Google tokens use SQLite's REPLACE INTO for upsert since user_id has a unique constraint. update_access_token only changes the access_token field (called after refresh, doesn't touch the refresh_token).",
+    },
+    {
+      title: "Chat thread and message CRUD (10 functions)",
+      code: `pub fn create_chat_thread(conn, user_id, title) -> Result<i32> { /* last_insert_rowid */ }
+pub fn list_chat_threads(conn, user_id) -> Result<Vec<ChatThreadSummary>> {
+    // Ordered by updated_at DESC (most recent activity first)
+    // Includes has_unread flag
+}
+pub fn save_chat_message(conn, thread_id, role, content) {
+    // Inserts message AND updates thread's updated_at timestamp
+}
+pub fn save_chat_message_returning_id(conn, thread_id, role, content) -> Result<i32> {
+    // Same as above but returns the message ID (for progressive updates)
+}
+pub fn update_chat_message_content(conn, message_id, content) {
+    // Used for progressive streaming - updates message as more text arrives
+}
+pub fn load_chat_messages(conn, thread_id) -> Result<Vec<ChatMessage>> {
+    // Ordered by created_at ASC (chronological)
+}
+pub fn delete_chat_thread(conn, thread_id) { /* messages cascade-deleted by FK */ }
+pub fn update_chat_thread_title(conn, thread_id, title) { /* ... */ }
+pub fn mark_thread_unread(conn, thread_id) { /* sets has_unread = 1 */ }
+pub fn mark_thread_read(conn, thread_id) { /* sets has_unread = 0 */ }
+pub fn delete_chat_message(conn, message_id) { /* ... */ }`,
+      explanation: "Chat persistence. Threads sort by most recent activity (updated_at changes on every message). save_chat_message_returning_id and update_chat_message_content work together for progressive streaming - the first call creates the message, subsequent calls update it as more text arrives from Claude. This way, if the connection drops mid-stream, the partial response is already saved. delete_chat_thread cascades to messages via foreign key.",
+    },
+    {
+      title: "Email queue operations (12 functions)",
+      code: `pub fn insert_email_queue_entry(conn, gmail_message_id, thread_id, user_id,
+    sender, subject, snippet, filtered_out, filter_reason, ai_summary, raw_json) -> Result<i32>
+pub fn list_pending_emails(conn, user_id) -> Result<Vec<EmailQueueEntry>> {
+    // WHERE filtered_out = false AND status = 'pending', ordered by created_at DESC
+}
+pub fn get_pending_email_count(conn, user_id) -> Result<i64> { /* for badge count */ }
+pub fn email_exists_in_queue(conn, gmail_message_id, user_id) -> Result<bool>
+pub fn email_thread_exists_in_queue(conn, gmail_thread_id, user_id) -> Result<bool>
+pub fn update_email_status(conn, entry_id, status) { /* "pending" -> "archived" */ }
+pub fn list_email_filter_rules(conn, user_id) -> Result<Vec<EmailFilterRule>>
+pub fn insert_email_filter_rule(conn, user_id, rule_type, value) -> Result<i32>
+pub fn get_email_filter_rule(conn, rule_id) -> Result<Option<EmailFilterRule>>
+pub fn delete_email_filter_rule(conn, rule_id)
+pub fn upsert_email_webhook_state(conn, user_id, history_id, watch_expiration, last_poll_at)
+pub fn get_email_webhook_state(conn, user_id) -> Result<Option<EmailWebhookState>>`,
+      explanation: "Email queue persistence. list_pending_emails only shows non-filtered emails with pending status - this is what drives the triage UI. The two exists checks (by message_id and by thread_id) prevent duplicate processing during polling. Filter rules CRUD supports the user-defined blacklist. Webhook state tracks the Gmail history ID for incremental polling. The badge count query is separate from the full list for performance (just a COUNT, no data transfer).",
+    },
+    {
+      title: "Meeting queue operations (11 functions)",
+      code: `pub fn insert_meeting_queue_entry(conn, recording_id, user_id,
+    meeting_name, meeting_date, duration, attendees_json, transcript_text) -> Result<i32>
+pub fn list_pending_meetings(conn, user_id) -> Result<Vec<MeetingQueueEntry>> {
+    // WHERE status = 'pending', ordered by created_at DESC
+}
+pub fn get_pending_meeting_count(conn, user_id) -> Result<i64> { /* badge count */ }
+pub fn meeting_exists_in_queue(conn, recording_id, user_id) -> Result<bool>
+pub fn mark_meeting_reviewed(conn, meeting_id) { /* status = 'reviewed', sets reviewed_at */ }
+pub fn insert_meeting_draft_task(conn, meeting_id, title, assignee, email) -> Result<i32>
+pub fn list_meeting_draft_tasks(conn, meeting_id) -> Result<Vec<MeetingDraftTask>>
+pub fn update_draft_task_status(conn, task_id, status, google_task_id, google_tasklist_id)
+pub fn update_draft_task_details(conn, task_id, title, assignee_email)
+pub fn get_draft_task(conn, task_id) -> Result<Option<MeetingDraftTask>>
+pub fn get_meeting_queue_entry(conn, meeting_id) -> Result<Option<MeetingQueueEntry>>`,
+      explanation: "Meeting queue persistence. Same pattern as email: pending items drive the UI, exists check prevents duplicates, badge count is a lightweight query. Draft tasks are linked to meetings and track their lifecycle: pending -> approved (with google_task_id stored) or rejected. update_draft_task_status stores the Google Task ID and list ID so the app can reference the created task later. mark_meeting_reviewed sets the reviewed_at timestamp for audit trail.",
+    },
+    {
+      title: "Chad Ads token and conversation storage (4 functions)",
+      code: `pub fn store_chad_ads_token(conn, user_id, user_token, customer_id) {
+    // REPLACE INTO (upsert by user_id unique constraint)
+}
+pub fn get_chad_ads_token(conn, user_id) -> Result<Option<ChadAdsToken>>
+pub fn update_chad_ads_customer_id(conn, user_id, customer_id)
+pub fn load_chad_ads_conversation(conn, user_id, customer_id) -> Result<String> {
+    // Returns JSON array string, or "[]" if no history
+}
+pub fn save_chad_ads_conversation(conn, user_id, customer_id, history_json) {
+    // REPLACE INTO - upserts conversation by user_id + customer_id
+}`,
+      explanation: "Chad Ads persistence. Token storage is one record per user (like Google tokens). Conversation history is stored per user+customer pair as a JSON string. load returns '[]' if no history exists, so callers don't need null handling. save uses REPLACE INTO for upsert. The customer_id is stored separately so it persists across sessions - the user doesn't have to re-select their ad account every time.",
+    },
+  ],
+};
+
+// ============================================================
+// CHAT BOX SERVER FUNCTIONS
+// ============================================================
+
+export const chatBoxServer: CodeAnnotation = {
+  file: "src/components/chat_box.rs",
+  sections: [
+    {
+      title: "Server-side chat functions",
+      code: `#[server(input = Json)]
+pub async fn save_message_api(
+    auth_token: String, thread_id: i32, role: String, content: String,
+) -> Result<i32, ServerFnError> {
+    // Verifies auth, saves message, returns message_id
+    // Used for saving user messages before starting generation
+}
+
+#[server(UpdateThreadTitleApi, "/api")]
+pub async fn update_thread_title_api(
+    auth_token: String, thread_id: i32, title: String,
+) -> Result<(), ServerFnError> {
+    // Verifies auth + ownership, updates title
+    // Called when user renames a thread in the sidebar
+}
+
+#[server(StartChatApi, "/api")]
+pub async fn start_chat_api(
+    auth_token: String, thread_id: i32,
+    messages: Vec<UiChatMessage>, user_local_time: String, user_timezone: String,
+) -> Result<String, ServerFnError> {
+    // Triggers server-side generation by calling start_generation()
+    // Returns a stream_id the client uses to subscribe to SSE
+    // This is the bridge between the UI and the chat_endpoint
+}`,
+      explanation: "Three server functions that support the chat UI. save_message_api persists the user's message before generation starts (so it's saved even if generation fails). update_thread_title_api handles sidebar renames. start_chat_api is the critical bridge - it triggers the server-side generation loop and returns a stream_id that the browser uses to subscribe to the SSE stream. The separation between 'start' and 'subscribe' allows reconnection if the browser connection drops mid-stream.",
     },
   ],
 };
