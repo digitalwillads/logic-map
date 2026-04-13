@@ -694,24 +694,27 @@
 }
 
 .code-link {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
+  display: block;
+  padding: 14px 18px;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   cursor: pointer;
   transition: all 0.15s;
   text-decoration: none;
-  color: #374151;
-  font-size: 14px;
+  color: inherit;
 }
 
 .code-link:hover {
   border-color: #3b82f6;
   background: rgba(59, 130, 246, 0.02);
-  color: #111827;
+}
+
+.code-link-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
 }
 
 .code-link-icon {
@@ -719,6 +722,20 @@
   font-size: 12px;
   color: #3b82f6;
   font-weight: 600;
+}
+
+.code-link-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.code-link-desc {
+  font-size: 13px;
+  color: #6b7280;
+  line-height: 1.5;
+  margin: 0;
+  padding-left: 26px;
 }
 
 /* ---- Screenshots ---- */

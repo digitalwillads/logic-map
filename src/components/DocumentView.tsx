@@ -529,15 +529,6 @@ function SystemPage({
         </CollapsibleSection>
       )}
 
-      {/* Functions */}
-      {system.functions.length > 0 && (
-        <CollapsibleSection title="Functions" defaultOpen>
-          {system.functions.map((fn) => (
-            <FunctionBlock key={fn.id} fn={fn} />
-          ))}
-        </CollapsibleSection>
-      )}
-
       {/* Child systems (integrations) */}
       {hasChildren && (
         <section className="children-section">
@@ -571,8 +562,13 @@ function SystemPage({
               className="code-link"
               onClick={() => onViewCode(cf.annotation)}
             >
-              <span className="code-link-icon">{"</>"}</span>
-              <span>{cf.label}</span>
+              <div className="code-link-header">
+                <span className="code-link-icon">{"</>"}</span>
+                <span className="code-link-title">{cf.label}</span>
+              </div>
+              <p className="code-link-desc">
+                {cf.annotation.sections.map((s) => s.title).join(" / ")}
+              </p>
             </a>
           ))}
         </section>
