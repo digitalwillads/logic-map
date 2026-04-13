@@ -484,16 +484,6 @@ function SystemPage({
         </div>
       )}
 
-      {/* History */}
-      {system.history && system.history.length > 0 && (
-        <CollapsibleSection title="History" defaultOpen={false}>
-          <ol className="history-list">
-            {system.history.map((entry, i) => (
-              <li key={i}>{entry}</li>
-            ))}
-          </ol>
-        </CollapsibleSection>
-      )}
 
       {/* Rules */}
       {hasInvariants && (
