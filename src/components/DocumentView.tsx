@@ -533,7 +533,7 @@ function SystemPage({
       {system.functions.length > 0 && (
         <CollapsibleSection title="Functions" defaultOpen>
           {system.functions.map((fn) => (
-            <FunctionBlock key={fn.id} fn={fn} onViewCode={onViewCode} />
+            <FunctionBlock key={fn.id} fn={fn} />
           ))}
         </CollapsibleSection>
       )}
@@ -561,6 +561,22 @@ function SystemPage({
         </section>
       )}
 
+      {/* Source Code */}
+      {codeFiles && codeFiles.length > 0 && (
+        <section className="code-links-section">
+          <h3 className="section-heading">Source Code</h3>
+          {codeFiles.map((cf, i) => (
+            <a
+              key={i}
+              className="code-link"
+              onClick={() => onViewCode(cf.annotation)}
+            >
+              <span className="code-link-icon">{"</>"}</span>
+              <span>{cf.label}</span>
+            </a>
+          ))}
+        </section>
+      )}
     </>
   );
 }
@@ -628,16 +644,9 @@ function EntityBlock({
 
 /* ---- Function Block ---- */
 
-function FunctionBlock({ fn, onViewCode }: {
-  fn: System["functions"][0];
-  onViewCode?: (annotation: CodeAnnotation) => void;
-}) {
+function FunctionBlock({ fn }: { fn: System["functions"][0] }) {
   const [showDecisions, setShowDecisions] = useState(false);
   const hasDecisions = fn.decisions.length > 0;
-
-  // Find matching code annotation from source path
-  const sourceFile = fn.source?.split("::")[0]; // "src/email/pipeline.rs::process_email" -> "src/email/pipeline.rs"
-  const codeAnnotation = sourceFile ? sourceToAnnotation[sourceFile] : undefined;
 
   return (
     <div className={`fn-block ${fn.uncertain ? "uncertain" : ""}`}>
@@ -646,26 +655,16 @@ function FunctionBlock({ fn, onViewCode }: {
           {fn.name}
           {fn.uncertain && <span className="badge-uncertain">?</span>}
         </h4>
-        <div className="fn-header-actions">
-          {codeAnnotation && onViewCode && (
-            <button
-              className="fn-code-link"
-              onClick={() => onViewCode(codeAnnotation.annotation)}
-            >
-              {"</>"}
-            </button>
-          )}
-          {hasDecisions && (
-            <button
-              className="fn-toggle"
-              onClick={() => setShowDecisions(!showDecisions)}
-            >
-              {showDecisions
-                ? "Hide decisions"
-                : `${fn.decisions.length} decision${fn.decisions.length > 1 ? "s" : ""}`}
-            </button>
-          )}
-        </div>
+        {hasDecisions && (
+          <button
+            className="fn-toggle"
+            onClick={() => setShowDecisions(!showDecisions)}
+          >
+            {showDecisions
+              ? "Hide decisions"
+              : `${fn.decisions.length} decision${fn.decisions.length > 1 ? "s" : ""}`}
+          </button>
+        )}
       </div>
       <p>{fn.description}</p>
       {fn.source && <code className="source-path">{fn.source}</code>}
