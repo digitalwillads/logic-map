@@ -574,13 +574,15 @@
               "id": "google_tasks.client",
               "name": "Tasks API Client",
               "description": "HTTP client for Google Tasks API. Supports CRUD for both task lists and individual tasks. Handles pagination for large lists.",
-              "decisions": []
+              "decisions": [],
+              "source": "src/tasks/client.rs"
             },
             {
               "id": "google_tasks.tools",
               "name": "Tasks Chat Tools",
               "description": "11 tool functions available to Claude: list/create/update/delete task lists, list/get/create/update/complete/delete/move tasks. Formats output with checkbox icons, due dates, and direct links. Admin variants allow managing other users' tasks.",
-              "decisions": []
+              "decisions": [],
+              "source": "src/chat/tools/tasks.rs"
             }
           ]
         },
@@ -611,7 +613,8 @@
               "id": "stripe.tools",
               "name": "Stripe Chat Tools",
               "description": "5 admin-only tool functions: list customers, list subscriptions, list invoices, list charges, list disputes. All support filtering by date range, customer, status. Human-readable formatting with currency conversion.",
-              "decisions": []
+              "decisions": [],
+              "source": "src/stripe/tools.rs"
             }
           ]
         }
@@ -825,7 +828,8 @@
           "id": "email_triage.polling",
           "name": "Email Polling Loop",
           "description": "Runs every 120s, discovers all users with Google tokens, fetches new Gmail messages since last history ID, feeds each through the pipeline.",
-          "decisions": []
+          "decisions": [],
+          "source": "src/email/polling.rs::start_polling_task"
         },
         {
           "id": "email_triage.pipeline",
@@ -842,19 +846,22 @@
               "name": "Calendar Context Enrichment",
               "description": "Looks back 30 days for meetings with the sender to give context about the relationship and recent interactions."
             }
-          ]
+          ],
+          "source": "src/email/pipeline.rs::process_email"
         },
         {
           "id": "email_triage.chat",
           "name": "Email Chat Endpoint",
           "description": "POST /api/email-chat. Lets the user have a conversation about a specific email. Claude has access to Gmail tools and can compose replies or drafts. Uses reply_to_email (not search) since the email ID is already known.",
-          "decisions": []
+          "decisions": [],
+          "source": "src/email/chat_endpoint.rs::email_chat_stream"
         },
         {
           "id": "email_triage.ui",
           "name": "Email Triage Card",
           "description": "UI component in the Emails tab. Shows queue of pending emails with AI summaries. User can read full email, chat with Claude about it, then click 'Triage Now' to move to next. Auto-advances through queue.",
-          "decisions": []
+          "decisions": [],
+          "source": "src/components/email_triage.rs"
         }
       ]
     },
@@ -925,7 +932,8 @@
           "id": "meeting_review.polling",
           "name": "Meeting Polling Loop",
           "description": "Runs every 300s, discovers users with calendar access, fetches new recordings from Recorder API, feeds each through the pipeline.",
-          "decisions": []
+          "decisions": [],
+          "source": "src/meetings/polling.rs::start_polling_task"
         },
         {
           "id": "meeting_review.pipeline",
@@ -942,19 +950,22 @@
               "name": "Assignee Resolution",
               "description": "Tries to match attendee names to email addresses using calendar event data and Google Directory."
             }
-          ]
+          ],
+          "source": "src/meetings/pipeline.rs::process_recording"
         },
         {
           "id": "meeting_review.chat",
           "name": "Meeting Chat Endpoint",
           "description": "POST /api/meeting-chat. Conversation about a specific meeting. Claude has access to all tools plus the transcript context. Can help refine task descriptions or suggest additional tasks.",
-          "decisions": []
+          "decisions": [],
+          "source": "src/meetings/chat_endpoint.rs::meeting_chat_stream"
         },
         {
           "id": "meeting_review.ui",
           "name": "Meeting Review Card",
           "description": "UI component in the Meetings tab. Shows meeting name, date, attendees, and auto-extracted draft tasks. Each task shows title and suggested assignee. User can accept (creates Google Task), reject, or refine tasks via chat. 'Done - Next Meeting' advances to next meeting.",
-          "decisions": []
+          "decisions": [],
+          "source": "src/components/meeting_review.rs"
         }
       ]
     },

@@ -493,6 +493,30 @@
   margin-bottom: 4px;
 }
 
+.fn-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fn-code-link {
+  background: none;
+  border: 1px solid #e5e7eb;
+  color: #3b82f6;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: "SF Mono", "Fira Code", monospace;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.fn-code-link:hover {
+  background: rgba(59, 130, 246, 0.05);
+  border-color: #3b82f6;
+}
+
 .fn-header h4 {
   font-size: 15px;
   font-weight: 600;

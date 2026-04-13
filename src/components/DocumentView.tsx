@@ -23,6 +23,9 @@ const mockupMap: Record<string, () => JSX.Element> = {
   "meeting_review.ui": MeetingReviewMockup,
 };
 
+// Map source file paths to their annotations (for function-level code links)
+const sourceToAnnotation: Record<string, { label: string; annotation: CodeAnnotation }> = {};
+
 // Map system IDs to their annotated code files
 const codeMap: Record<string, { label: string; annotation: CodeAnnotation }[]> = {
   "chat_engine": [
@@ -77,6 +80,14 @@ const codeMap: Record<string, { label: string; annotation: CodeAnnotation }[]> =
     { label: "tools/stripe.rs - Stripe billing queries (5 functions)", annotation: stripeTools },
   ],
 };
+
+// Build source file -> annotation lookup
+for (const files of Object.values(codeMap)) {
+  for (const f of files) {
+    // Key by the annotation's file path (e.g. "src/email/pipeline.rs")
+    sourceToAnnotation[f.annotation.file] = f;
+  }
+}
 
 interface DocumentViewProps {
   logicMap: LogicMap;
@@ -522,7 +533,7 @@ function SystemPage({
       {system.functions.length > 0 && (
         <CollapsibleSection title="Functions" defaultOpen>
           {system.functions.map((fn) => (
-            <FunctionBlock key={fn.id} fn={fn} />
+            <FunctionBlock key={fn.id} fn={fn} onViewCode={onViewCode} />
           ))}
         </CollapsibleSection>
       )}
@@ -550,21 +561,6 @@ function SystemPage({
         </section>
       )}
 
-      {codeFiles && codeFiles.length > 0 && (
-        <section className="code-links-section">
-          <h3 className="section-heading">Source Code</h3>
-          {codeFiles.map((cf, i) => (
-            <a
-              key={i}
-              className="code-link"
-              onClick={() => onViewCode(cf.annotation)}
-            >
-              <span className="code-link-icon">{"</>"}</span>
-              <span>{cf.label}</span>
-            </a>
-          ))}
-        </section>
-      )}
     </>
   );
 }
@@ -632,9 +628,16 @@ function EntityBlock({
 
 /* ---- Function Block ---- */
 
-function FunctionBlock({ fn }: { fn: System["functions"][0] }) {
+function FunctionBlock({ fn, onViewCode }: {
+  fn: System["functions"][0];
+  onViewCode?: (annotation: CodeAnnotation) => void;
+}) {
   const [showDecisions, setShowDecisions] = useState(false);
   const hasDecisions = fn.decisions.length > 0;
+
+  // Find matching code annotation from source path
+  const sourceFile = fn.source?.split("::")[0]; // "src/email/pipeline.rs::process_email" -> "src/email/pipeline.rs"
+  const codeAnnotation = sourceFile ? sourceToAnnotation[sourceFile] : undefined;
 
   return (
     <div className={`fn-block ${fn.uncertain ? "uncertain" : ""}`}>
@@ -643,16 +646,26 @@ function FunctionBlock({ fn }: { fn: System["functions"][0] }) {
           {fn.name}
           {fn.uncertain && <span className="badge-uncertain">?</span>}
         </h4>
-        {hasDecisions && (
-          <button
-            className="fn-toggle"
-            onClick={() => setShowDecisions(!showDecisions)}
-          >
-            {showDecisions
-              ? "Hide decisions"
-              : `${fn.decisions.length} decision${fn.decisions.length > 1 ? "s" : ""}`}
-          </button>
-        )}
+        <div className="fn-header-actions">
+          {codeAnnotation && onViewCode && (
+            <button
+              className="fn-code-link"
+              onClick={() => onViewCode(codeAnnotation.annotation)}
+            >
+              {"</>"}
+            </button>
+          )}
+          {hasDecisions && (
+            <button
+              className="fn-toggle"
+              onClick={() => setShowDecisions(!showDecisions)}
+            >
+              {showDecisions
+                ? "Hide decisions"
+                : `${fn.decisions.length} decision${fn.decisions.length > 1 ? "s" : ""}`}
+            </button>
+          )}
+        </div>
       </div>
       <p>{fn.description}</p>
       {fn.source && <code className="source-path">{fn.source}</code>}
