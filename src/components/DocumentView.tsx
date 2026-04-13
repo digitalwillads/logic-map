@@ -6,7 +6,7 @@ import {
   emailTriagePipeline, emailTriagePolling, emailChatEndpoint,
   chatEndpoint, toolExecutor, claudeClient, toolDefinitions,
   meetingPipeline, meetingPolling, meetingChatEndpoint,
-  gmailClient, calendarClient, calendarTools,
+  gmailClient, gmailTools, calendarClient, calendarTools,
   recorderTools, chadAdsTools, tasksTools, stripeTools,
   adminDelegation, authOauth,
   mainServer,
@@ -53,7 +53,8 @@ const codeMap: Record<string, { label: string; annotation: CodeAnnotation }[]> =
     { label: "meeting_api.rs - Meeting queue and task approval server functions", annotation: meetingAPI },
   ],
   "gmail": [
-    { label: "client.rs - Gmail API client", annotation: gmailClient },
+    { label: "tools/gmail.rs - Search, send, reply, draft tools", annotation: gmailTools },
+    { label: "client.rs - Gmail API client and MIME parsing", annotation: gmailClient },
   ],
   "calendar": [
     { label: "client.rs - Calendar API client", annotation: calendarClient },

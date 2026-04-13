@@ -606,6 +606,107 @@ fn extract_parts_recursive(parts: &[GmailPart]) -> (Vec<String>, Vec<String>) {
   ],
 };
 
+export const gmailTools: CodeAnnotation = {
+  file: "src/chat/tools/gmail.rs",
+  sections: [
+    {
+      title: "Email search with progress updates and category filtering",
+      code: `pub async fn search_emails(
+    client: &GmailClient, query: &str, max_results: u32,
+    user_email: &str, category: Option<&str>, progress: ProgressSender,
+) -> ToolResult {
+    send_progress(&progress, "Searching emails...").await;
+
+    // Category filtering uses Gmail's internal label IDs, not query syntax
+    let list = match category.and_then(|c| category_to_label_id(c)) {
+        Some(label_id) => client.list_messages_by_labels(&[label_id], q, max_results).await,
+        None => client.list_messages(q, max_results, None).await,
+    };
+
+    let total = list.messages.len();
+    let mut output = format!("Found {} email(s):\\n\\n", total);
+
+    for (i, msg_ref) in list.messages.iter().enumerate() {
+        if i > 0 && i % 10 == 0 {
+            send_progress(&progress, format!("Loading email {}/{}...", i + 1, total)).await;
+        }
+        let msg = client.get_message(&msg_ref.id).await?;
+        let parsed = parse_email(&msg);
+        output.push_str(&format!(
+            "---\\nFrom: {}\\nSubject: {}\\nDate: {}\\nLink: {}\\n",
+            parsed.from, parsed.subject, parsed.date,
+            gmail_link(&parsed.thread_id, user_email)
+        ));
+    }
+    ToolResult::success_truncated(output)
+}`,
+      explanation: "Searches Gmail and fetches full details for each result. Progress updates fire every 10 emails so the user sees something happening during large searches. Category filtering (primary, social, promotions, updates) uses Gmail's internal label IDs because the query syntax for categories doesn't work through the API. Each result includes a Gmail deep link with the authuser parameter for multi-account support. Failed individual message loads don't abort the whole search.",
+    },
+    {
+      title: "Send email with user confirmation gate",
+      code: `pub async fn send_email(
+    client: &GmailClient, user_email: &str,
+    to: &[String], cc: &[String], bcc: &[String],
+    subject: &str, body: &str, user_confirmed: bool,
+) -> ToolResult {
+    if !user_confirmed {
+        return ToolResult::error(
+            "Cannot send email without user confirmation. \
+             Draft the email in chat first, show the recipients and content, \
+             then ask them to confirm. Only set user_confirmed=true after they explicitly agree."
+        );
+    }
+
+    let raw = build_rfc2822_message(user_email, &to_refs, &cc_refs, &bcc_refs,
+        subject, body, None, None);
+
+    match client.send_message(&raw).await {
+        Ok(resp) => ToolResult::success(format!("Email sent! ID: {}", resp.id)),
+        Err(e) => ToolResult::error(format!("Failed to send: {}", e)),
+    }
+}`,
+      explanation: "The primary safety gate for email sending. If user_confirmed is false, the tool returns an error message that instructs Claude to draft the email first and ask for confirmation. This is enforced in code, not just the system prompt - Claude cannot bypass it. The error message is carefully worded to guide Claude through the correct workflow: draft, show recipients and content, then ask the user to confirm.",
+    },
+    {
+      title: "Reply with threading header extraction",
+      code: `pub async fn reply_to_email(
+    client: &GmailClient, user_email: &str,
+    message_id: &str, thread_id: &str,
+    to: &[String], cc: &[String], bcc: &[String],
+    body: &str, user_confirmed: bool,
+) -> ToolResult {
+    if !user_confirmed { return ToolResult::error("...confirmation required..."); }
+
+    // Fetch original message to get threading headers
+    let original = client.get_message(message_id).await?;
+    let payload = original.payload.as_ref()?;
+
+    let original_subject = extract_header(payload, "Subject");
+    let reply_subject = if original_subject.to_lowercase().starts_with("re: ") {
+        original_subject
+    } else {
+        format!("Re: {}", original_subject)
+    };
+
+    // Build References chain for proper threading
+    let original_message_id = extract_header(payload, "Message-ID");
+    let original_references = extract_header(payload, "References");
+    let references = if original_references.is_empty() {
+        original_message_id.clone()
+    } else {
+        format!("{} {}", original_references, original_message_id)
+    };
+
+    let raw = build_rfc2822_message(user_email, &to_refs, &cc_refs, &bcc_refs,
+        &reply_subject, body, Some(&original_message_id), Some(&references));
+
+    client.send_reply(&raw, thread_id).await
+}`,
+      explanation: "Replying requires fetching the original message to extract its Message-ID and References headers. These are critical for email threading - without them, the reply shows up as a new conversation in every email client. The References header is built by appending the original's Message-ID to the existing References chain (per RFC 5322). The subject gets 'Re: ' prepended only if it's not already there. The same confirmation gate applies.",
+    },
+  ],
+};
+
 // ============================================================
 // CALENDAR INTEGRATION
 // ============================================================
