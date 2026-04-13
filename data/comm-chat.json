@@ -1,6 +1,6 @@
 {
   "project": "comm-chat",
-  "version": "2026-04-12",
+  "version": "2026-04-13",
   "intent": "A full-stack AI advisor and triage platform for Digital Will agency. Gives Claude access to email, calendar, tasks, meeting recordings, Google Ads, and Stripe through a unified chat interface. Background pipelines automatically process incoming emails and meeting recordings, extract action items, and present them for human review through tabbed Email and Meeting triage views.",
   "invariants": [],
   "entities": [],
@@ -13,8 +13,14 @@
       "why": "The team needed a single place to interact with all their work tools through natural language instead of switching between Gmail, Calendar, Google Ads, and Slack constantly. Instead of learning each tool's interface, they chat with Claude and it handles the tool switching.",
       "who": "All team members use this daily. Will uses it most heavily for client management, ad performance review, and email triage. Team members use it for checking schedules, finding meeting notes, and managing tasks.",
       "config": [
-        {"name": "ANTHROPIC_API_KEY", "description": "Claude API key for all AI interactions"},
-        {"name": "PORT", "description": "Server port (default 3000)"}
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "description": "Claude API key for all AI interactions"
+        },
+        {
+          "name": "PORT",
+          "description": "Server port (default 3000)"
+        }
       ],
       "dependencies": [
         "Anthropic Claude API (Sonnet for main, Opus for advisor)",
@@ -191,8 +197,14 @@
           "why": "Email is the team's primary communication channel with clients. Being able to search, read, and reply to emails through chat saves constant context-switching between the chat interface and Gmail.",
           "who": "All team members, especially Will who manages client relationships directly. Admin delegation lets Will check team members' inboxes when covering for them.",
           "config": [
-            {"name": "GOOGLE_CLIENT_ID", "description": "Shared OAuth credentials"},
-            {"name": "GOOGLE_CLIENT_SECRET", "description": "Shared OAuth credentials"}
+            {
+              "name": "GOOGLE_CLIENT_ID",
+              "description": "Shared OAuth credentials"
+            },
+            {
+              "name": "GOOGLE_CLIENT_SECRET",
+              "description": "Shared OAuth credentials"
+            }
           ],
           "dependencies": [
             "Google Gmail API",
@@ -429,7 +441,10 @@
           "why": "Meeting recordings and transcripts are valuable but hard to access after the fact. Being able to ask Claude 'what did we discuss in the meeting with Client X last Tuesday?' and get an answer from the transcript is a huge time saver.",
           "who": "Will primarily, for reviewing client meeting discussions and extracting context. Also feeds into the meeting review pipeline for automated task extraction.",
           "config": [
-            {"name": "SEARCH_API_KEY", "description": "API key for the recording service"}
+            {
+              "name": "SEARCH_API_KEY",
+              "description": "API key for the recording service"
+            }
           ],
           "dependencies": [
             "Meeting recording service API",
@@ -516,7 +531,10 @@
           "why": "Will manages Google Ads campaigns for clients and was tired of logging into the Google Ads dashboard to check basic metrics. Being able to ask 'how is the Nzymes campaign performing this week?' in chat is much faster.",
           "who": "Will exclusively - he manages all client ad accounts. Read operations are frequent (checking performance), write operations are rare and require confirmation.",
           "config": [
-            {"name": "CHAD_ADS_SECRET", "description": "Admin secret for Chad Ads API authentication"}
+            {
+              "name": "CHAD_ADS_SECRET",
+              "description": "Admin secret for Chad Ads API authentication"
+            }
           ],
           "dependencies": [
             "Chad Ads API (wraps Google Ads)",
@@ -702,7 +720,10 @@
           "why": "Will needed to quickly check billing status for clients without logging into the Stripe dashboard. Questions like 'has Client X paid this month?' or 'what's our total MRR?' come up in client management.",
           "who": "Will only - all Stripe tools are admin-gated. Used for financial reporting and checking client payment status.",
           "config": [
-            {"name": "STRIPE_API_KEY", "description": "Stripe secret key for billing queries"}
+            {
+              "name": "STRIPE_API_KEY",
+              "description": "Stripe secret key for billing queries"
+            }
           ],
           "dependencies": [
             "Stripe API"
@@ -753,9 +774,18 @@
       "why": "Everyone on the team already has Google Workspace accounts, so OAuth was the natural choice - no separate passwords to manage, and it gives us access to Gmail and Calendar APIs automatically.",
       "who": "All team members authenticate through their @digitalwillads.com Google accounts. Will is the primary admin.",
       "config": [
-        {"name": "GOOGLE_CLIENT_ID", "description": "OAuth client ID from Google Cloud Console"},
-        {"name": "GOOGLE_CLIENT_SECRET", "description": "OAuth client secret"},
-        {"name": "SERVICE_ACCOUNT_PATH", "description": "Path to service account JSON for admin delegation (default: service_account.json)"}
+        {
+          "name": "GOOGLE_CLIENT_ID",
+          "description": "OAuth client ID from Google Cloud Console"
+        },
+        {
+          "name": "GOOGLE_CLIENT_SECRET",
+          "description": "OAuth client secret"
+        },
+        {
+          "name": "SERVICE_ACCOUNT_PATH",
+          "description": "Path to service account JSON for admin delegation (default: service_account.json)"
+        }
       ],
       "dependencies": [
         "Google OAuth API",
@@ -905,8 +935,14 @@
       "why": "The team was spending 1-2 hours per day just reading and sorting email. Most of it was noise - receipts, calendar invites, newsletters, automated notifications. They were missing important client emails buried in the noise. The triage pipeline filters out the junk and surfaces what matters.",
       "who": "Will primarily, though all team members have it available. Will reviews 30-50 emails per day through the triage queue instead of scrolling through 200+ raw inbox messages.",
       "config": [
-        {"name": "EMAIL_POLL_INTERVAL_SECS", "description": "Seconds between email polling cycles (default 120)"},
-        {"name": "ANTHROPIC_API_KEY", "description": "Claude API key for AI classification and summarization"}
+        {
+          "name": "EMAIL_POLL_INTERVAL_SECS",
+          "description": "Seconds between email polling cycles (default 120)"
+        },
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "description": "Claude API key for AI classification and summarization"
+        }
       ],
       "dependencies": [
         "Gmail API (via OAuth tokens)",
@@ -1043,9 +1079,18 @@
       "why": "After client meetings, action items would get discussed and agreed upon but never tracked. Tasks fell through the cracks because nobody was writing them down consistently. This pipeline automatically extracts tasks from meeting transcripts so nothing gets lost.",
       "who": "Will uses this after every client meeting. The goal is for account managers (Eddie, Reileigh) to use it for their client meetings too.",
       "config": [
-        {"name": "MEETING_POLL_INTERVAL_SECS", "description": "Seconds between meeting polling cycles (default 300)"},
-        {"name": "SEARCH_API_KEY", "description": "API key for the meeting recording service"},
-        {"name": "ANTHROPIC_API_KEY", "description": "Claude API key for Barbara Ann task extraction"}
+        {
+          "name": "MEETING_POLL_INTERVAL_SECS",
+          "description": "Seconds between meeting polling cycles (default 300)"
+        },
+        {
+          "name": "SEARCH_API_KEY",
+          "description": "API key for the meeting recording service"
+        },
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "description": "Claude API key for Barbara Ann task extraction"
+        }
       ],
       "dependencies": [
         "Meeting recording service API",
@@ -1168,6 +1213,168 @@
       ]
     },
     {
+      "id": "client_roster",
+      "name": "Client Roster",
+      "intent": "Automatically derives who is a client, what stage they're in, and who on the team owns them - primarily from meeting transcripts as they're processed, supplemented by Stripe, email, and calendar signals.",
+      "description": "Every time Barbara Ann processes a meeting transcript, the roster engine runs alongside task extraction. It listens for relationship signals in the conversation: is this a sales pitch, an onboarding call, a regular check-in, or an offboarding discussion? It identifies external attendees as client contacts, maps internal attendees as the assigned team, and infers lifecycle stage from conversation content. Between meetings, it cross-references Stripe subscription status, email activity, and calendar patterns to keep the picture current. The result is a live roster that Barbara can query whenever she needs to know 'who is this client and who handles them.'",
+      "why": "Nobody at the agency maintains a client list. Assignments live in people's heads. When Barbara processes a meeting or triages an email, she has no way to know if the person is a prospect, an active client, or someone who churned months ago - and no way to know which team member should get the task. This system derives that knowledge from the signals already flowing through the platform instead of requiring manual upkeep.",
+      "who": "Barbara Ann consumes this data for task routing and context. Will and Reileigh can view the roster to see the current state of all client relationships and team assignments without asking around.",
+      "config": [],
+      "dependencies": [
+        "Meeting Review pipeline (primary signal source - transcripts + attendees)",
+        "Stripe API (payment/subscription status confirmation)",
+        "Google Calendar API (meeting frequency and patterns)",
+        "Gmail API (email activity and thread patterns)",
+        "SQLite database"
+      ],
+      "failure_modes": [
+        "Transcript ambiguous about relationship stage: roster keeps current stage, flags low confidence - doesn't guess",
+        "Stripe customer email doesn't match any known contact: payment signal is stored but unlinked until a meeting or email creates the connection",
+        "Two team members show equal ownership signals: both listed as assigned (companionship model) rather than picking one arbitrarily",
+        "No signals for 60+ days: client transitions to inactive, but the record persists with full history so nothing is lost",
+        "Meeting with unknown external attendees: contacts created as unlinked prospects, promoted to client contacts when subsequent signals confirm"
+      ],
+      "validation": [
+        "Compare derived roster against the team-directory.md client assignments - does the system agree with what people already know?",
+        "After processing a sales-to-onboarding transition meeting, verify the client's stage updates from prospect to onboarding",
+        "Check that Stripe subscription cancellation moves a client to churned even if meetings are still happening (payment is definitive)",
+        "Verify that a client with active meetings but no Stripe record shows as prospect, not active",
+        "Review the assigned_team output for clients with multiple account managers - does it reflect the companionship pairs correctly?"
+      ],
+      "limitations": [
+        "Only as good as the transcripts - if a meeting isn't recorded, that signal is invisible",
+        "Transcript-based stage detection depends on conversational cues, which can be subtle or ambiguous",
+        "New clients acquired through channels other than meetings (e.g., pure email sign-up) won't be detected until a meeting occurs or Stripe payment arrives",
+        "Historical roster state before this system launches is cold-start - needs an initial sweep of recent meetings and Stripe data to bootstrap"
+      ],
+      "invariants": [
+        {
+          "id": "inv_meetings_are_foundational",
+          "name": "Meeting transcripts are the primary signal source",
+          "description": "Client status is derived first and foremost from what happens in meetings. Stripe, email, and calendar are confirmation and gap-filling signals. If the transcript says 'we're ending the engagement' but Stripe still shows active, the roster flags the discrepancy rather than ignoring either signal."
+        },
+        {
+          "id": "inv_roster_updates_on_meeting",
+          "name": "Roster updates run as part of meeting processing",
+          "description": "Every time the meeting pipeline processes a recording, the roster engine runs on that transcript alongside task extraction. This is not a separate cron job - it's woven into the same pipeline so the roster stays current as meetings happen."
+        },
+        {
+          "id": "inv_no_manual_entry",
+          "name": "No manual client entry required",
+          "description": "The roster is entirely derived from signals. Nobody has to create a client record or assign a team member manually. The system infers both from observed behavior."
+        },
+        {
+          "id": "inv_stripe_is_definitive_for_payment",
+          "name": "Stripe status is definitive for payment questions",
+          "description": "Meeting signals determine relationship stage (prospect/onboarding/active), but Stripe is the authority on whether money is actually flowing. A client can't be 'active' without either a Stripe subscription or a recent payment."
+        }
+      ],
+      "entities": [
+        {
+          "id": "client_record",
+          "name": "ClientRecord",
+          "description": "The derived state of a client relationship. Not manually created - emerges from signals. Tracks lifecycle stage, confidence level, team assignments, and the most recent signals that informed the current state.",
+          "key_fields": [
+            "client_name - derived from meeting titles, email threads, or Stripe customer name",
+            "lifecycle_stage - prospect, onboarding, active, at_risk, churned, inactive",
+            "confidence - 0.0 to 1.0, how certain the system is about the current stage",
+            "stripe_customer_id - linked Stripe customer (nullable, matched by contact email)",
+            "stripe_status - active, past_due, canceled, none",
+            "last_meeting_at - most recent meeting with this client",
+            "last_payment_at - most recent Stripe payment",
+            "last_email_at - most recent email thread activity",
+            "last_signal_at - most recent signal of any kind",
+            "first_payment_at - used to distinguish onboarding from active (< 30 days = onboarding)",
+            "assigned_team - JSON array of team members with role and confidence",
+            "stage_reason - human-readable explanation of why the system chose this stage"
+          ]
+        },
+        {
+          "id": "roster_transition",
+          "name": "RosterTransition",
+          "description": "Audit trail entry created whenever a client's lifecycle stage changes. Records what triggered the change and what signals were present at the time.",
+          "key_fields": [
+            "client_record_id - which client changed",
+            "from_stage - previous lifecycle stage (null for first detection)",
+            "to_stage - new lifecycle stage",
+            "trigger - what caused the transition (e.g., 'meeting_transcript', 'stripe_subscription_canceled')",
+            "reason - human-readable explanation (e.g., 'Onboarding meeting detected: discussed campaign setup and creative brief')",
+            "signals_snapshot - JSON of all signals at the time of transition"
+          ]
+        }
+      ],
+      "functions": [
+        {
+          "id": "client_roster.transcript_analyzer",
+          "name": "Transcript Relationship Analyzer",
+          "description": "Runs inside the meeting processing pipeline, right alongside Barbara Ann's task extraction. Analyzes the transcript for relationship signals: meeting type (sales/onboarding/check-in/review/offboarding), relationship language, discussion topics, and attendee roles. Outputs a relationship assessment that the roster engine uses to update client state.",
+          "source": "src/roster/transcript_analyzer.rs",
+          "decisions": [
+            {
+              "id": "client_roster.transcript_analyzer.stage_detection",
+              "name": "Lifecycle Stage Detection from Conversation",
+              "description": "Identifies stage from transcript cues. Sales meetings discuss pricing, proposals, scope. Onboarding meetings discuss setup, timelines, access. Active check-ins discuss performance, results, next steps. At-risk signals include complaints, competitor mentions, budget concerns. Offboarding discusses wrapping up, final deliverables, handoff.",
+              "rationale": "The words people use in meetings are the most reliable signal of where a relationship stands. A meeting titled 'Weekly Check-in' with discussion about campaign ROAS is clearly an active client, while a meeting titled 'Intro Call' discussing pricing is clearly a prospect."
+            },
+            {
+              "id": "client_roster.transcript_analyzer.attendee_role_mapping",
+              "name": "Attendee Role Mapping",
+              "description": "External attendees (non-@digitalwillads.com emails) are identified as client contacts. Internal attendees are mapped to team roles. The DWA person who speaks most and drives the agenda is tagged as primary owner. Others are tagged as specialists or support.",
+              "rationale": "Who shows up to a meeting and who drives it tells you who owns the relationship. If Isaac runs every weekly meeting for a client, he's the primary. If Kathryn joins for the ads portion, she's the specialist."
+            }
+          ]
+        },
+        {
+          "id": "client_roster.signal_aggregator",
+          "name": "Signal Aggregator",
+          "description": "Periodically sweeps non-meeting signals to supplement transcript-derived state. Checks Stripe for subscription/payment status, scans recent calendar events for meeting frequency, and checks Gmail for email thread activity. Runs less frequently than meeting processing (every 4 hours) because these signals change slowly.",
+          "source": "src/roster/signal_aggregator.rs",
+          "decisions": [
+            {
+              "id": "client_roster.signal_aggregator.stripe_matching",
+              "name": "Stripe Customer Matching",
+              "description": "Matches Stripe customers to client records by email address. A client contact's email appearing as a Stripe customer email creates the link. Once linked, subscription status is tracked continuously.",
+              "rationale": "Email is the most reliable cross-system identifier. Stripe customer email matching client contact email is a strong signal that money is flowing for this relationship."
+            },
+            {
+              "id": "client_roster.signal_aggregator.activity_decay",
+              "name": "Activity Decay Detection",
+              "description": "Detects when signals drop off. No meetings in 21+ days with an active client triggers at_risk. No signals of any kind in 60+ days triggers inactive. Decay thresholds are calibrated to the agency's normal cadence - most active clients have weekly or biweekly meetings.",
+              "rationale": "Absence of signals is itself a signal. If a client who had weekly meetings suddenly goes silent for 3 weeks, something changed. The system flags this before anyone notices."
+            }
+          ]
+        },
+        {
+          "id": "client_roster.query_api",
+          "name": "Roster Query Endpoints",
+          "description": "API endpoints that Barbara and the UI consume. Returns current client state, team assignments, and transition history. Barbara calls this when processing meetings or triaging emails to get context about who she's dealing with.",
+          "source": "src/roster/api.rs",
+          "decisions": [
+            {
+              "id": "client_roster.query_api.context_injection",
+              "name": "Roster Context in Barbara's System Prompt",
+              "description": "When Barbara processes a meeting or email, the roster for relevant clients is injected into her system prompt. She doesn't have to call an API - the context is already there. This means her task assignments and routing decisions are informed by the roster automatically.",
+              "rationale": "Making Barbara call an API for roster data adds latency and complexity. Injecting it into the prompt means she has the context immediately and can use it naturally in her reasoning."
+            }
+          ]
+        },
+        {
+          "id": "client_roster.bootstrap",
+          "name": "Cold Start Bootstrap",
+          "description": "One-time initialization that runs when the roster system is first deployed. Sweeps existing meeting recordings, Stripe customers, and recent calendar/email activity to build the initial roster state. After bootstrap, the system maintains state incrementally from new signals.",
+          "source": "src/roster/bootstrap.rs",
+          "decisions": [
+            {
+              "id": "client_roster.bootstrap.lookback_window",
+              "name": "90-Day Lookback for Bootstrap",
+              "description": "Bootstrap analyzes the last 90 days of meetings, payments, and email activity. This is long enough to capture most active client relationships but short enough to avoid processing ancient history.",
+              "rationale": "90 days covers roughly one billing cycle for monthly clients and captures the cadence of even the least-frequent meeting schedules. Going further back risks misclassifying churned clients as active."
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "database",
       "name": "Database",
       "intent": "Persists all application state - users, sessions, OAuth tokens, chat history, and integration credentials. The single source of truth for who's logged in, what they've said, and what services they've connected.",
@@ -1175,7 +1382,10 @@
       "why": "SQLite was chosen for simplicity - single-file database, no separate database server to manage, easy to deploy on Fly.io. The application is team-internal with low concurrent usage, so SQLite's limitations aren't a problem.",
       "who": "Internal infrastructure - no team member interacts with this directly.",
       "config": [
-        {"name": "DATABASE_URL", "description": "Path to SQLite database file (default ./comm-chat.db)"}
+        {
+          "name": "DATABASE_URL",
+          "description": "Path to SQLite database file (default ./comm-chat.db)"
+        }
       ],
       "dependencies": [
         "SQLite (via Diesel ORM)",
@@ -1348,6 +1558,36 @@
       "from": "meeting_review.chat",
       "to": "google_tasks.tools",
       "description": "The meeting chat endpoint gives Claude access to task management tools for creating and organizing extracted tasks"
+    },
+    {
+      "from": "meeting_review.pipeline",
+      "to": "client_roster.transcript_analyzer",
+      "description": "After Barbara Ann extracts tasks from a meeting, the transcript analyzer runs on the same transcript to detect client relationship signals and update the roster"
+    },
+    {
+      "from": "client_roster.signal_aggregator",
+      "to": "stripe.tools",
+      "description": "Signal aggregator queries Stripe subscription and payment status to confirm or update client payment state"
+    },
+    {
+      "from": "client_roster.signal_aggregator",
+      "to": "calendar.get_events",
+      "description": "Signal aggregator scans team calendars for meeting frequency patterns with each client's contacts"
+    },
+    {
+      "from": "client_roster.signal_aggregator",
+      "to": "gmail.search",
+      "description": "Signal aggregator checks recent email thread activity between team members and client contacts"
+    },
+    {
+      "from": "client_roster.query_api",
+      "to": "meeting_review.pipeline",
+      "description": "Roster context is injected into Barbara Ann's system prompt when processing meetings, so task assignments are informed by who owns the client"
+    },
+    {
+      "from": "client_roster.query_api",
+      "to": "email_triage.pipeline",
+      "description": "Roster context is injected when triaging emails, so Barbara knows which team member should handle emails from a given client"
     }
   ]
 }
