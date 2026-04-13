@@ -763,6 +763,551 @@
               "source": "src/stripe/tools.rs"
             }
           ]
+        },
+        {
+          "id": "crm",
+          "name": "CRM",
+          "intent": "The single place to find everything about a client - who they are, whether they're a client, who manages them, and every interaction we've had with them.",
+          "description": "Each client has a record with their info, their status, and their assigned manager. At the end of each day, Barbara writes a summary of what happened with each active client - meetings, emails, texts, payments. Those daily summaries accumulate into the full narrative of the relationship. Tasks are attached to clients with assignees. For real-time questions, Barbara goes straight to the source - Gmail, Calendar, recorder - no intermediate layer.",
+          "why": "There's no single place to look up a client and see everything. Meetings are in the recorder, emails are in Gmail, texts are on phones, tasks are in Google Tasks. The CRM puts it all in one place, organized by client, so Barbara and the team can find anything without digging through five systems.",
+          "who": "Barbara uses this for context when processing meetings and emails. Will and account managers use it to see the full picture of a client relationship.",
+          "config": [],
+          "dependencies": [
+            "Meeting Review pipeline (meeting recordings and transcripts)",
+            "Gmail API (emails)",
+            "iMessage / text access (text messages)",
+            "Stripe API (payment status)",
+            "SQLite database"
+          ],
+          "failure_modes": [
+            "Interaction ingestion fails: client record stays current, just missing the latest interaction - next cycle catches up",
+            "Can't determine which client an email or text belongs to: interaction stored unlinked, attached later when context makes it clear",
+            "Narrative generation fails: old narrative stays cached, regenerated on next request"
+          ],
+          "validation": [
+            "Pick a client and verify all recent meetings, emails, and texts show up attached to them",
+            "Create a task for a client and verify it appears on the client record",
+            "Check that the narrative accurately reflects the last 30 days of interactions"
+          ],
+          "limitations": [
+            "Only captures interactions that flow through systems we can access - in-person conversations without a recording are invisible",
+            "Email and text polling runs hourly, so there's up to an hour of delay for those sources"
+          ],
+          "invariants": [],
+          "entities": [
+            {
+              "id": "crm_client",
+              "name": "Client",
+              "description": "A company or person the agency works with (or might work with). Has standard fields that are always the same, plus all interactions, tasks, and a generated narrative attached.",
+              "key_fields": [
+                "name - company or person name",
+                "slug - URL-friendly identifier",
+                "status - prospect, active, churned",
+                "manager - the account manager assigned to this client (email)",
+                "contacts - people at the client (name, email, phone, role)",
+                "stripe_customer_id - linked Stripe customer for payment tracking",
+                "created_at - when the client record was first created",
+                "last_interaction_at - most recent interaction of any kind"
+              ]
+            },
+            {
+              "id": "crm_task",
+              "name": "Task",
+              "description": "An action item attached to a client. Has an assignee (the team member responsible) and comes from either Barbara's meeting extraction or manual creation.",
+              "key_fields": [
+                "client_id - which client this task is for",
+                "title - what needs to be done",
+                "assigned_to - team member email",
+                "status - pending, active, completed",
+                "source - where this task came from (meeting_review, manual, email_triage)",
+                "created_at - when it was created"
+              ]
+            }
+          ],
+          "functions": [
+            {
+              "id": "crm.ingest_meeting",
+              "name": "Meeting Ingestion",
+              "description": "When the Meeting Review pipeline finishes processing a recording, the meeting gets summarized and attached to the right client. If the client doesn't exist yet and qualifying signals are present, a new client record is created. Status evaluation, manager assignment, and data enrichment all run as part of this step.",
+              "source": "src/crm/ingest.rs",
+              "decisions": [
+                {
+                  "id": "crm.ingest_meeting.client_matching",
+                  "name": "Client Matching from Meeting",
+                  "description": "External attendees are matched to existing clients by email. Meeting title is also checked against known client names. If no match, a new client is created as a prospect.",
+                  "rationale": "Meetings are the strongest signal for client identification - if someone shows up to a meeting with the team, they're at least a prospect."
+                }
+              ]
+            },
+            {
+              "id": "crm.ingest_comms",
+              "name": "Email & Text Ingestion",
+              "description": "Runs on a schedule (hourly or on new email/text arrival). Pulls recent emails and texts, summarizes each one, and attaches them to the matching client. If a new qualifying contact appears, a client record is created. Status and data fields are updated from anything new Barbara learns.",
+              "source": "src/crm/ingest.rs",
+              "decisions": [
+                {
+                  "id": "crm.ingest_comms.polling_schedule",
+                  "name": "Hourly Polling for Emails and Texts",
+                  "description": "Emails and texts are pulled and attached on an hourly cycle rather than real-time. This keeps the system simple and avoids constant polling overhead.",
+                  "rationale": "Unlike meetings which are event-driven (recording finishes), emails and texts trickle in constantly. Hourly batching is good enough - nobody needs sub-hour latency on CRM updates."
+                }
+              ]
+            },
+            {
+              "id": "crm.query",
+              "name": "Client Query API",
+              "description": "Endpoints for reading client data. Get a client with all their info, interactions, tasks, and narrative. List all clients filtered by status or manager. Search clients by name or contact email. Barbara calls this for context when processing meetings or emails.",
+              "source": "src/crm/api.rs",
+              "decisions": []
+            }
+          ],
+          "children": [
+            {
+              "id": "contact_data",
+              "name": "Client Data",
+              "intent": "The standard fields that define a client record - their business info, team assignments, platform access, links, and dates. These are the fields that are always the same for every client.",
+              "description": "Every client has the same set of structured fields organized into sections. Contact & Info covers who they are and what they do. Team tracks who manages them internally. Billing tracks what they pay and their ad budget. Platform Access tracks which ad platforms and tools we have access to. Links stores their Google Drive, intake form, and other references. Dates tracks key milestones. These fields get populated over time as Barbara learns about the client from meetings, emails, and onboarding.",
+              "why": "When you pull up a client, you need the basics at a glance without digging through meeting notes. These structured fields give Barbara and the team instant context: who's the contact, what do they do, who manages them, what platforms are we on, what are they paying.",
+              "who": "Barbara reads these fields for context. Account managers reference them for client details. Stacey references billing fields.",
+              "config": [],
+              "dependencies": [],
+              "failure_modes": [],
+              "validation": [],
+              "limitations": [
+                "Fields are populated from interactions over time - a brand new prospect will have sparse data until more interactions happen"
+              ],
+              "invariants": [],
+              "entities": [
+                {
+                  "id": "contact_info",
+                  "name": "Contact & Info",
+                  "description": "The client's identity - who they are, how to reach them, and what their business does.",
+                  "key_fields": [
+                    "contact_name - primary contact person's name",
+                    "email - primary email address",
+                    "phone - phone number",
+                    "website - their website URL",
+                    "website_type - Shopify, WordPress, Lovable, custom, etc.",
+                    "what_they_do - industry or business description",
+                    "country - where they're based",
+                    "timezone - their timezone (EST, PST, etc.)",
+                    "business_age - how long they've been in business",
+                    "street_address - business address",
+                    "city - city",
+                    "state - state/province"
+                  ]
+                },
+                {
+                  "id": "contact_team",
+                  "name": "Team",
+                  "description": "Internal team assignments for this client. Who manages the relationship and who handles each platform.",
+                  "key_fields": [
+                    "account_manager - primary relationship owner (derived from interaction patterns, can be overridden)",
+                    "google_manager - who manages their Google Ads",
+                    "google_analytics_manager - who manages their GA",
+                    "meta_creative_manager - who manages their Meta ads creative",
+                    "sold_by - who closed the deal (Tristan, Shane, Will)"
+                  ]
+                },
+                {
+                  "id": "contact_deal",
+                  "name": "Deal",
+                  "description": "The contract and scope of work with the client - what services we provide, what platforms we manage, the fee structure, and the terms of the engagement.",
+                  "key_fields": [
+                    "services - what we're doing for them (Google Ads management, Meta Ads, Creative, Tracking, SEO, Email Marketing, etc.)",
+                    "scope_description - plain English summary of the engagement ('Full-stack Google + Meta ads management with creative production')",
+                    "our_fee - monthly retainer or project fee",
+                    "fee_structure - Monthly Retainer, Percentage of Spend, Project-Based, Hourly",
+                    "proposed_ad_budget - what was proposed during sales",
+                    "current_ad_budget - what they're actually spending on ads",
+                    "contract_status - Sent, Signed, Expired, None",
+                    "contract_link - link to the signed contract (DocuSign / Google eSignature)",
+                    "payment_terms - Net 30, Due on Receipt, etc.",
+                    "stripe_customer_id - linked Stripe customer for automatic payment tracking",
+                    "conversion_goals - what counts as success (Purchases, Calls, Subscriptions, Contact Forms, Bookings, Leads)",
+                    "target_cpa - maximum cost per acquisition the client will accept",
+                    "target_roas - minimum return on ad spend the client expects",
+                    "margin - client's profit margin (for breakeven ROAS calculation)",
+                    "aov_ltv - average order value / lifetime value"
+                  ]
+                },
+                {
+                  "id": "contact_platforms",
+                  "name": "Platform Access",
+                  "description": "Which ad platforms and tools we have access to for this client. Tracked as yes/no with account details.",
+                  "key_fields": [
+                    "google_ads - do we have access (yes/no), account name, verified status",
+                    "google_analytics - do we have access (yes/no)",
+                    "meta_ads - do we have access (yes/no), account name",
+                    "meta_business - do we have Meta Business Manager access (yes/no)",
+                    "website_access - do we have access to their website (yes/no)",
+                    "strategy - informational, e.g. 'TOFU+MOFU+BOFU'",
+                    "campaign_plan - informational, e.g. 'Optimize Existing'"
+                  ]
+                },
+                {
+                  "id": "contact_links",
+                  "name": "Links",
+                  "description": "Reference links for this client's shared resources.",
+                  "key_fields": [
+                    "google_drive - link to their Google Drive folder",
+                    "intake_form - link to their completed intake form"
+                  ]
+                },
+                {
+                  "id": "contact_lifecycle",
+                  "name": "Lifecycle & Dates",
+                  "description": "Where the client is in the relationship and key date milestones.",
+                  "key_fields": [
+                    "status - Prospect, Onboarding, Active, Offboarding, Inactive",
+                    "client_type - Full Time, One Time, Project-Based, or Consultation",
+                    "lead_source - Upwork, Referral, Outbound, Inbound",
+                    "lead_status - Needs Another Meeting, Waiting on Proposal, Client Thinking It Over, Sent Proposal + Followup, Send Contract, Sent Invoice, Scheduling Access Meeting, Not Becoming Client, Not a Good Fit, Became a Client, Waiting on Payment",
+                    "start_date - when they became a client",
+                    "created_at - when the record was first created",
+                    "last_interaction_at - most recent interaction of any kind"
+                  ]
+                },
+                {
+                  "id": "contact_contacts",
+                  "name": "Contacts (People)",
+                  "description": "The individual people at the client company we interact with. A client can have multiple contacts.",
+                  "key_fields": [
+                    "name - person's name",
+                    "description - free text role/notes (e.g. 'CEO, only loop in for big decisions' or 'handles creative')",
+                    "channels - list of ways to reach them (email, phone, WhatsApp, Slack, SMS, iMessage) with addresses",
+                    "preferred_channel - which channel to use when we initiate outreach",
+                    "audience_target - who they're trying to reach (for ad targeting context)"
+                  ]
+                }
+              ],
+              "functions": []
+            },
+            {
+              "id": "daily_summary",
+              "name": "Daily Summary",
+              "intent": "An end-of-day summary of what happened with a client, if anything happened. These summaries accumulate over time and become the narrative of the relationship.",
+              "description": "At the end of each day, Barbara looks at what happened with each client and writes a short summary. If nothing happened, nothing gets written. Over time, these daily entries build up into the full story of the relationship. If someone needs the big picture, they read the last few daily summaries. If someone needs real-time detail, Barbara goes directly to Gmail, Calendar, or the recorder.",
+              "why": "A full timeline of every email and text is too much noise. A single cached narrative goes stale. Daily summaries hit the sweet spot - you get a running log of what matters without drowning in every individual touchpoint. And they write themselves from the interactions that already flow through the system.",
+              "who": "Barbara generates these automatically at end of day. Account managers read them to stay current on their clients. Will reads them for oversight.",
+              "config": [],
+              "dependencies": [
+                "Gmail API (what emails happened today)",
+                "Google Calendar API (what meetings happened today)",
+                "Meeting Review pipeline (transcripts from today's meetings)",
+                "iMessage access (texts from today)",
+                "Stripe API (any payment events today)"
+              ],
+              "failure_modes": [
+                "Nothing happened with a client today: no summary generated, nothing to see",
+                "Barbara misses an interaction: summary is incomplete but tomorrow's summary can reference it if it comes up",
+                "Claude API fails at end of day: retry once, if still failing, generate in the morning for the previous day"
+              ],
+              "validation": [
+                "At the end of a day with client meetings and emails, verify the summary captures the key points from each",
+                "Verify no summary is generated for clients with zero activity",
+                "Read a week of daily summaries and check they give a coherent picture of the relationship"
+              ],
+              "limitations": [
+                "Summaries are generated once at end of day - if you need to know what happened an hour ago, ask Barbara directly and she'll check the sources",
+                "Quality depends on what Barbara can access - interactions outside the system (phone calls on personal phones, in-person chats) won't appear"
+              ],
+              "invariants": [
+                {
+                  "id": "inv_no_activity_no_summary",
+                  "name": "No activity, no summary",
+                  "description": "If nothing happened with a client on a given day, no summary entry is created. The log only contains days where something actually happened."
+                }
+              ],
+              "entities": [],
+              "functions": [
+                {
+                  "id": "daily_summary.generation",
+                  "name": "End-of-Day Generation",
+                  "description": "Runs at the end of each business day. For each client, Barbara checks: were there meetings today? Emails? Texts? Payments? If yes, she reads the relevant sources and writes a concise summary. One paragraph per client per day. Covers what happened, any decisions made, any follow-ups needed, and anything notable.",
+                  "source": "src/crm/daily_summary.rs",
+                  "decisions": [
+                    {
+                      "id": "daily_summary.generation.what_to_include",
+                      "name": "What Makes the Summary",
+                      "description": "The summary covers: meetings (what was discussed, outcomes), emails (key asks or updates), texts (anything substantive), payments (received, missed, or disputed). Routine automated emails (receipts, notifications) are excluded. Only things a human would care about.",
+                      "rationale": "The summary is for catching up, not auditing. If Stripe sent a receipt, that's noise. If a client emailed asking to change their budget, that's signal."
+                    },
+                    {
+                      "id": "daily_summary.generation.tone",
+                      "name": "Written Like Internal Notes",
+                      "description": "Summaries read like quick notes between teammates. 'Had the weekly with Panel Decor - Isaac walked through ROAS, client happy with results, wants to increase budget next month. Samia sent new creatives, client approved 3 of 5.' Not formal, not verbose.",
+                      "rationale": "These are internal notes, not client-facing documents. Direct and scannable."
+                    }
+                  ]
+                },
+                {
+                  "id": "daily_summary.real_time_fallback",
+                  "name": "Real-Time Lookup (Barbara Direct)",
+                  "description": "If someone needs to know what's happening right now - not at end of day - they ask Barbara in chat. She goes straight to the source: searches Gmail, checks Calendar, pulls up the recorder. No intermediate data layer. The daily summary is for catching up, not for real-time queries.",
+                  "source": "src/crm/daily_summary.rs",
+                  "decisions": [
+                    {
+                      "id": "daily_summary.real_time_fallback.no_cache_layer",
+                      "name": "No Intermediate Cache for Real-Time",
+                      "description": "Real-time queries go directly to Gmail/Calendar/recorder APIs. There's no cached timeline Barbara reads from. She reads the actual source every time. This keeps the system simple and means the data is always fresh.",
+                      "rationale": "A cached timeline is another thing to keep in sync. Barbara already has tools to search Gmail and Calendar directly. For real-time questions, just use those tools."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "crm_task",
+              "name": "Task",
+              "intent": "An action item attached to a client with an assigned team member. Created by Barbara from meetings and emails, or manually by the team. Lives on the client record so all work for a client is visible in one place.",
+              "description": "Every task belongs to a client and has someone assigned to it. Barbara creates tasks when she extracts action items from meeting transcripts or identifies follow-ups in emails. Tasks can also be created manually. Each task has a priority, a status, and a source so you know where it came from. When Barbara creates a task, she assigns it based on who manages the client and who was discussing the work in the meeting.",
+              "why": "Action items from meetings and emails get lost. Someone says 'I'll send that over' in a meeting and it never happens because nobody wrote it down. Tasks capture those commitments and assign them to the right person automatically.",
+              "who": "Barbara creates most tasks automatically. Account managers see their assigned tasks. Will and Reileigh see all tasks across clients for oversight.",
+              "config": [],
+              "dependencies": [
+                "Meeting Review pipeline (Barbara extracts tasks from transcripts)",
+                "Email Triage pipeline (Barbara identifies follow-ups from emails)",
+                "Google Tasks API (approved tasks sync to team members' Google Tasks)",
+                "CRM Client record (every task references a client)"
+              ],
+              "failure_modes": [
+                "Barbara assigns task to wrong person: task is editable, manager can reassign",
+                "Google Tasks sync fails: task exists in CRM but not in assignee's Google Tasks - retried on next sync",
+                "Duplicate task created from overlapping meeting/email: Barbara checks for similar recent tasks before creating"
+              ],
+              "validation": [
+                "After a meeting with clear action items, verify Barbara created tasks for each one with correct assignees",
+                "Verify tasks appear on the client record and in the assignee's task list",
+                "Check that completing a task in the CRM syncs to Google Tasks"
+              ],
+              "limitations": [
+                "Barbara sometimes misidentifies who should own a task when multiple people discuss it",
+                "Tasks created from email follow-ups can be less precise than meeting-extracted tasks since email context is thinner"
+              ],
+              "invariants": [
+                {
+                  "id": "inv_task_has_client",
+                  "name": "Every task belongs to a client",
+                  "description": "Tasks always reference a client so they appear on the client's record. Internal tasks without a client (like 'fix the phone system') go to a separate internal task list."
+                }
+              ],
+              "entities": [],
+              "functions": [
+                {
+                  "id": "crm_task.from_meeting",
+                  "name": "Task Extraction from Meetings",
+                  "description": "Barbara reads the meeting transcript and identifies action items. For each one, she creates a task with a title, assigns it to the team member who was discussing it (or the client's account manager as default), and sets priority based on urgency cues in the conversation. Tasks start as drafts for human review before being finalized.",
+                  "source": "src/crm/tasks.rs",
+                  "decisions": [
+                    {
+                      "id": "crm_task.from_meeting.draft_first",
+                      "name": "Tasks Start as Drafts",
+                      "description": "Meeting-extracted tasks start as drafts that a manager reviews before they're finalized. The manager can accept, edit, reassign, or reject each task. This prevents Barbara's misinterpretations from creating bad tasks.",
+                      "rationale": "Barbara is good but not perfect. A human glance at extracted tasks catches the 10-20% that are wrong or need adjustment."
+                    },
+                    {
+                      "id": "crm_task.from_meeting.assignee_logic",
+                      "name": "Assignee Selection",
+                      "description": "First choice: the team member who was speaking when the action item was discussed. Second choice: the client's account manager. Third choice: the meeting organizer. Barbara uses the CRM's manager assignment to inform this.",
+                      "rationale": "The person talking about doing something is usually the person who should do it. Falls back to the account manager since they're the catch-all for client work."
+                    }
+                  ]
+                },
+                {
+                  "id": "crm_task.from_email",
+                  "name": "Task Creation from Emails",
+                  "description": "When Barbara triages an email and identifies something that needs action (a client asking for something, a deadline mentioned, a request for deliverables), she creates a task. These are less common than meeting tasks but catch things that happen purely over email.",
+                  "source": "src/crm/tasks.rs",
+                  "decisions": []
+                },
+                {
+                  "id": "crm_task.google_tasks_sync",
+                  "name": "Google Tasks Sync",
+                  "description": "When a task is approved, it's created in the assignee's Google Tasks account under a 'Meeting Action Items' list. The Google Task ID is stored so status can sync both ways. Completing the Google Task marks it complete in the CRM and vice versa.",
+                  "source": "src/crm/tasks.rs",
+                  "decisions": [
+                    {
+                      "id": "crm_task.google_tasks_sync.bidirectional",
+                      "name": "Two-Way Sync",
+                      "description": "Task status syncs both directions. Complete it in Google Tasks and it's complete in the CRM. Complete it in the CRM and it's complete in Google Tasks. This prevents the 'which system is the source of truth' problem.",
+                      "rationale": "People check off tasks wherever they happen to be. Forcing them to use one specific system to mark things done creates friction and stale data."
+                    }
+                  ]
+                },
+                {
+                  "id": "crm_task.priority_escalation",
+                  "name": "Priority & Escalation",
+                  "description": "Tasks have a system priority (Critical, High, Normal, Low) set by Barbara based on context. Users can override with their own priority. Tasks approaching their due date without progress get escalated automatically - Normal becomes High 2 days before due, High becomes Critical 1 day before.",
+                  "source": "src/crm/tasks.rs",
+                  "decisions": [
+                    {
+                      "id": "crm_task.priority_escalation.user_override",
+                      "name": "User Priority Wins",
+                      "description": "If a user manually sets priority, the system stops auto-escalating that task. The user knows better than Barbara whether something is actually urgent.",
+                      "rationale": "Barbara might think a casual mention is critical. The user override prevents the system from crying wolf."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "client",
+              "name": "Client",
+              "intent": "The lifecycle of a single client record - how it gets created, how it stays current, and how Barbara knows when things change.",
+              "description": "Client discovery, status updates, manager assignment, and data enrichment all happen right after every ingestion - when a meeting is processed, when an email comes in, when a text arrives. Barbara doesn't wait until end of day. She sees a new person in a meeting, checks the qualification rules, and creates the record right then. She hears onboarding language in a transcript and updates the status right then. Every ingestion is a chance to learn something new.",
+              "why": "Status and assignments need to update automatically as the relationship evolves. Nobody is going to remember to go update a CRM field when a prospect becomes a client or when an account manager changes.",
+              "who": "Barbara maintains this automatically. Team sees the results.",
+              "config": [],
+              "dependencies": [
+                "CRM ingestion pipeline (triggers status evaluation on every interaction)"
+              ],
+              "failure_modes": [
+                "Transcript ambiguous about status: keeps current status, doesn't guess",
+                "Conflicting signals (meeting says active, Stripe says canceled): Stripe wins for payment questions, flags discrepancy for review"
+              ],
+              "validation": [
+                "After a sales-to-onboarding meeting, verify status changes to active",
+                "After Stripe cancellation, verify status changes to churned",
+                "After 30 days of silence on an active client, verify it gets flagged"
+              ],
+              "limitations": [
+                "Unrecorded meetings are invisible - status only updates from interactions Barbara can see"
+              ],
+              "invariants": [
+                {
+                  "id": "inv_not_everyone_is_a_client",
+                  "name": "Not everyone who shows up is a client",
+                  "description": "Just because someone appears in an email or meeting doesn't make them a client. Vendors, contractors, freelancers, partners, and spam all show up in the same channels. Barbara only creates a client record when specific qualifying signals are present."
+                },
+                {
+                  "id": "inv_client_requires_payment_or_contract",
+                  "name": "A client requires a payment or a signed contract",
+                  "description": "To move from prospect to active client, at least one of these must be true: (1) they have a Stripe subscription or have made a payment, (2) a signed contract exists (DocuSign/Google eSignature), or (3) Will or Tristan explicitly marks them as a client. Meetings alone don't make someone a client - they make someone a prospect."
+                },
+                {
+                  "id": "inv_prospect_requires_sales_activity",
+                  "name": "A prospect requires sales activity",
+                  "description": "To be created as a prospect (not just ignored), someone must be in a meeting that looks like a sales conversation (pricing, proposals, scope discussion) OR be in an email thread with Tristan or Shane about potential work. A random person CC'd on a marketing email is not a prospect."
+                }
+              ],
+              "entities": [],
+              "functions": [
+                {
+                  "id": "client.creation",
+                  "name": "1. Client Discovery (on every ingestion)",
+                  "description": "Every time a meeting, email, or text is ingested, Barbara checks if any participants aren't in the CRM yet. If she sees qualifying signals - a sales conversation, a payment, a signed contract reference - she creates the record right then. She pulls together whatever she can from the interaction: name, email, company, what was discussed. No waiting until end of day.",
+                  "source": "src/crm/client.rs",
+                  "decisions": [
+                    {
+                      "id": "client.creation.at_ingestion",
+                      "name": "Discovery at Ingestion, Not End of Day",
+                      "description": "Client records are created the moment Barbara processes the interaction that qualifies them. If a sales meeting happens at 10am, the client record exists by 10:01am. Barbara doesn't batch this up.",
+                      "rationale": "If Barbara processes a meeting and extracts tasks, she needs to know who the client is right then to assign tasks correctly. Waiting until end of day means tasks from that meeting would have no client attached."
+                    },
+                    {
+                      "id": "client.creation.populate_immediately",
+                      "name": "Populate What You Can Immediately",
+                      "description": "When creating a new client, Barbara fills in as much as she can from the triggering interaction. Meeting title gives company name. Email signature gives phone, website, role. Calendar event gives timezone. She doesn't leave fields blank if the answer is right there.",
+                      "rationale": "The first interaction usually contains a lot of context. Capture it while you're looking at it."
+                    }
+                  ]
+                },
+                {
+                  "id": "client.creation",
+                  "name": "1. Client Creation",
+                  "description": "A client record is created the first time an unknown external person shows up in an interaction. Barbara sees a meeting attendee with an email she doesn't recognize, or an email from a new domain, or a new Stripe customer. She creates the client record with whatever she knows: name, email, company. Status starts as 'prospect'.",
+                  "source": "src/crm/client.rs",
+                  "decisions": [
+                    {
+                      "id": "client.creation.from_meeting",
+                      "name": "Created from Meeting",
+                      "description": "External attendee (non-@digitalwillads.com) in a meeting triggers creation. Name and email come from the calendar event. Company name is guessed from the meeting title or email domain.",
+                      "rationale": "Meetings are the most common way new clients appear. If someone is in a meeting with the team, they're at least a prospect."
+                    },
+                    {
+                      "id": "client.creation.from_email",
+                      "name": "Created from Email",
+                      "description": "An email from an unknown external address that isn't filtered out (not spam, not newsletters) can trigger client creation. Barbara checks if the email is part of an ongoing sales or business thread.",
+                      "rationale": "Not every email is a client - newsletters, vendors, spam. Barbara only creates a client record when the email looks like a real business conversation."
+                    },
+                    {
+                      "id": "client.creation.from_stripe",
+                      "name": "Created from Stripe",
+                      "description": "A new Stripe customer or subscription triggers creation if the customer email doesn't match an existing client. Status immediately set to 'active' since they're paying.",
+                      "rationale": "If someone is paying, they're a client. No ambiguity."
+                    }
+                  ]
+                },
+                {
+                  "id": "client.status_evaluation",
+                  "name": "2. Status Evaluation (on every ingestion)",
+                  "description": "Every time an interaction is attached to a client - meeting, email, text, payment - Barbara evaluates whether the status should change. This isn't a separate job. It's the last step of every ingestion. She looks at the interaction she just processed and asks: does this change what I know about this client?",
+                  "source": "src/crm/client.rs",
+                  "decisions": [
+                    {
+                      "id": "client.status_evaluation.qualification",
+                      "name": "Qualification Gate",
+                      "description": "Before any status change, Barbara checks the qualification rules. Prospect requires sales activity (meeting with sales language or email thread with Tristan/Shane). Active requires payment (Stripe) or signed contract. Without these signals, the person stays untracked - Barbara doesn't create a record for every external email address she encounters.",
+                      "rationale": "Without a gate, Barbara would create hundreds of client records for vendors, newsletter senders, job applicants, and everyone else who sends an email. The gate ensures only real business relationships get tracked."
+                    },
+                    {
+                      "id": "client.status_evaluation.prospect_to_active",
+                      "name": "Prospect -> Active",
+                      "description": "Triggered by: first Stripe payment, OR meeting transcript with onboarding language (setup, timelines, access, 'welcome aboard'). Stripe payment is definitive. Transcript cues require confidence - Barbara doesn't flip status on a single ambiguous sentence.",
+                      "rationale": "Payment is the clearest signal. Meeting language is the second-best signal. Both mean the relationship has moved past sales."
+                    },
+                    {
+                      "id": "client.status_evaluation.active_to_at_risk",
+                      "name": "Active -> At Risk",
+                      "description": "Triggered by: Stripe payment past due, OR no interactions of any kind in 21+ days, OR meeting transcript with complaint/frustration language, competitor mentions, or budget concerns.",
+                      "rationale": "Silence from an active client is a warning sign. Payment issues are a warning sign. Unhappy language in meetings is a warning sign."
+                    },
+                    {
+                      "id": "client.status_evaluation.to_churned",
+                      "name": "Any -> Churned",
+                      "description": "Triggered by: Stripe subscription canceled/ended, OR offboarding email sent (Daniel's offboarding template), OR meeting transcript with explicit wrap-up language ('ending the engagement', 'last month', 'final deliverables').",
+                      "rationale": "Stripe cancellation is definitive. Offboarding emails are definitive. Explicit wrap-up language in meetings is definitive."
+                    },
+                    {
+                      "id": "client.status_evaluation.silence_flag",
+                      "name": "Silence Detection",
+                      "description": "If an active client has had no interactions logged in 30+ days, Barbara flags it. This check runs whenever any interaction is processed - she scans for stale clients as a side effect. Not a cron job, just piggybacks on existing work.",
+                      "rationale": "The simplest approach. Every time Barbara processes anything, she quickly checks if any active clients have gone quiet. No separate scheduler needed."
+                    }
+                  ]
+                },
+                {
+                  "id": "client.manager_assignment",
+                  "name": "3. Manager Assignment",
+                  "description": "The manager is derived from who shows up. The DWA team member who attends the most meetings with this client and is the primary email correspondent is the manager. Updated every time a new interaction comes in. If two people share the load, both are listed.",
+                  "source": "src/crm/client.rs",
+                  "decisions": [
+                    {
+                      "id": "client.manager_assignment.from_patterns",
+                      "name": "Manager from Interaction Patterns",
+                      "description": "Count meetings and emails per team member for this client. The person with the most touchpoints is the manager. Meetings are weighted higher than emails since anyone can be CC'd on an email but only the responsible person shows up to every meeting.",
+                      "rationale": "Actions speak louder than org charts. Who actually does the work is who owns the client."
+                    }
+                  ]
+                },
+                {
+                  "id": "client.info_enrichment",
+                  "name": "4. Info Enrichment",
+                  "description": "Every interaction is a chance to learn more about the client. Barbara picks up details from conversations: what industry they're in, what services we provide them, who their key contacts are, what their budget is. These get added to the client record over time so the picture gets richer with every touchpoint.",
+                  "source": "src/crm/client.rs",
+                  "decisions": [
+                    {
+                      "id": "client.info_enrichment.from_transcript",
+                      "name": "Details Extracted from Conversations",
+                      "description": "During meeting processing, Barbara notes any new facts about the client: industry, company size, services discussed, budget numbers, contact names and roles. These are added to the client record as structured fields.",
+                      "rationale": "Meetings are full of context that never gets written down. Barbara is already reading the transcript - she might as well capture the useful facts."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -1213,168 +1758,6 @@
       ]
     },
     {
-      "id": "client_roster",
-      "name": "Client Roster",
-      "intent": "Automatically derives who is a client, what stage they're in, and who on the team owns them - primarily from meeting transcripts as they're processed, supplemented by Stripe, email, and calendar signals.",
-      "description": "Every time Barbara Ann processes a meeting transcript, the roster engine runs alongside task extraction. It listens for relationship signals in the conversation: is this a sales pitch, an onboarding call, a regular check-in, or an offboarding discussion? It identifies external attendees as client contacts, maps internal attendees as the assigned team, and infers lifecycle stage from conversation content. Between meetings, it cross-references Stripe subscription status, email activity, and calendar patterns to keep the picture current. The result is a live roster that Barbara can query whenever she needs to know 'who is this client and who handles them.'",
-      "why": "Nobody at the agency maintains a client list. Assignments live in people's heads. When Barbara processes a meeting or triages an email, she has no way to know if the person is a prospect, an active client, or someone who churned months ago - and no way to know which team member should get the task. This system derives that knowledge from the signals already flowing through the platform instead of requiring manual upkeep.",
-      "who": "Barbara Ann consumes this data for task routing and context. Will and Reileigh can view the roster to see the current state of all client relationships and team assignments without asking around.",
-      "config": [],
-      "dependencies": [
-        "Meeting Review pipeline (primary signal source - transcripts + attendees)",
-        "Stripe API (payment/subscription status confirmation)",
-        "Google Calendar API (meeting frequency and patterns)",
-        "Gmail API (email activity and thread patterns)",
-        "SQLite database"
-      ],
-      "failure_modes": [
-        "Transcript ambiguous about relationship stage: roster keeps current stage, flags low confidence - doesn't guess",
-        "Stripe customer email doesn't match any known contact: payment signal is stored but unlinked until a meeting or email creates the connection",
-        "Two team members show equal ownership signals: both listed as assigned (companionship model) rather than picking one arbitrarily",
-        "No signals for 60+ days: client transitions to inactive, but the record persists with full history so nothing is lost",
-        "Meeting with unknown external attendees: contacts created as unlinked prospects, promoted to client contacts when subsequent signals confirm"
-      ],
-      "validation": [
-        "Compare derived roster against the team-directory.md client assignments - does the system agree with what people already know?",
-        "After processing a sales-to-onboarding transition meeting, verify the client's stage updates from prospect to onboarding",
-        "Check that Stripe subscription cancellation moves a client to churned even if meetings are still happening (payment is definitive)",
-        "Verify that a client with active meetings but no Stripe record shows as prospect, not active",
-        "Review the assigned_team output for clients with multiple account managers - does it reflect the companionship pairs correctly?"
-      ],
-      "limitations": [
-        "Only as good as the transcripts - if a meeting isn't recorded, that signal is invisible",
-        "Transcript-based stage detection depends on conversational cues, which can be subtle or ambiguous",
-        "New clients acquired through channels other than meetings (e.g., pure email sign-up) won't be detected until a meeting occurs or Stripe payment arrives",
-        "Historical roster state before this system launches is cold-start - needs an initial sweep of recent meetings and Stripe data to bootstrap"
-      ],
-      "invariants": [
-        {
-          "id": "inv_meetings_are_foundational",
-          "name": "Meeting transcripts are the primary signal source",
-          "description": "Client status is derived first and foremost from what happens in meetings. Stripe, email, and calendar are confirmation and gap-filling signals. If the transcript says 'we're ending the engagement' but Stripe still shows active, the roster flags the discrepancy rather than ignoring either signal."
-        },
-        {
-          "id": "inv_roster_updates_on_meeting",
-          "name": "Roster updates run as part of meeting processing",
-          "description": "Every time the meeting pipeline processes a recording, the roster engine runs on that transcript alongside task extraction. This is not a separate cron job - it's woven into the same pipeline so the roster stays current as meetings happen."
-        },
-        {
-          "id": "inv_no_manual_entry",
-          "name": "No manual client entry required",
-          "description": "The roster is entirely derived from signals. Nobody has to create a client record or assign a team member manually. The system infers both from observed behavior."
-        },
-        {
-          "id": "inv_stripe_is_definitive_for_payment",
-          "name": "Stripe status is definitive for payment questions",
-          "description": "Meeting signals determine relationship stage (prospect/onboarding/active), but Stripe is the authority on whether money is actually flowing. A client can't be 'active' without either a Stripe subscription or a recent payment."
-        }
-      ],
-      "entities": [
-        {
-          "id": "client_record",
-          "name": "ClientRecord",
-          "description": "The derived state of a client relationship. Not manually created - emerges from signals. Tracks lifecycle stage, confidence level, team assignments, and the most recent signals that informed the current state.",
-          "key_fields": [
-            "client_name - derived from meeting titles, email threads, or Stripe customer name",
-            "lifecycle_stage - prospect, onboarding, active, at_risk, churned, inactive",
-            "confidence - 0.0 to 1.0, how certain the system is about the current stage",
-            "stripe_customer_id - linked Stripe customer (nullable, matched by contact email)",
-            "stripe_status - active, past_due, canceled, none",
-            "last_meeting_at - most recent meeting with this client",
-            "last_payment_at - most recent Stripe payment",
-            "last_email_at - most recent email thread activity",
-            "last_signal_at - most recent signal of any kind",
-            "first_payment_at - used to distinguish onboarding from active (< 30 days = onboarding)",
-            "assigned_team - JSON array of team members with role and confidence",
-            "stage_reason - human-readable explanation of why the system chose this stage"
-          ]
-        },
-        {
-          "id": "roster_transition",
-          "name": "RosterTransition",
-          "description": "Audit trail entry created whenever a client's lifecycle stage changes. Records what triggered the change and what signals were present at the time.",
-          "key_fields": [
-            "client_record_id - which client changed",
-            "from_stage - previous lifecycle stage (null for first detection)",
-            "to_stage - new lifecycle stage",
-            "trigger - what caused the transition (e.g., 'meeting_transcript', 'stripe_subscription_canceled')",
-            "reason - human-readable explanation (e.g., 'Onboarding meeting detected: discussed campaign setup and creative brief')",
-            "signals_snapshot - JSON of all signals at the time of transition"
-          ]
-        }
-      ],
-      "functions": [
-        {
-          "id": "client_roster.transcript_analyzer",
-          "name": "Transcript Relationship Analyzer",
-          "description": "Runs inside the meeting processing pipeline, right alongside Barbara Ann's task extraction. Analyzes the transcript for relationship signals: meeting type (sales/onboarding/check-in/review/offboarding), relationship language, discussion topics, and attendee roles. Outputs a relationship assessment that the roster engine uses to update client state.",
-          "source": "src/roster/transcript_analyzer.rs",
-          "decisions": [
-            {
-              "id": "client_roster.transcript_analyzer.stage_detection",
-              "name": "Lifecycle Stage Detection from Conversation",
-              "description": "Identifies stage from transcript cues. Sales meetings discuss pricing, proposals, scope. Onboarding meetings discuss setup, timelines, access. Active check-ins discuss performance, results, next steps. At-risk signals include complaints, competitor mentions, budget concerns. Offboarding discusses wrapping up, final deliverables, handoff.",
-              "rationale": "The words people use in meetings are the most reliable signal of where a relationship stands. A meeting titled 'Weekly Check-in' with discussion about campaign ROAS is clearly an active client, while a meeting titled 'Intro Call' discussing pricing is clearly a prospect."
-            },
-            {
-              "id": "client_roster.transcript_analyzer.attendee_role_mapping",
-              "name": "Attendee Role Mapping",
-              "description": "External attendees (non-@digitalwillads.com emails) are identified as client contacts. Internal attendees are mapped to team roles. The DWA person who speaks most and drives the agenda is tagged as primary owner. Others are tagged as specialists or support.",
-              "rationale": "Who shows up to a meeting and who drives it tells you who owns the relationship. If Isaac runs every weekly meeting for a client, he's the primary. If Kathryn joins for the ads portion, she's the specialist."
-            }
-          ]
-        },
-        {
-          "id": "client_roster.signal_aggregator",
-          "name": "Signal Aggregator",
-          "description": "Periodically sweeps non-meeting signals to supplement transcript-derived state. Checks Stripe for subscription/payment status, scans recent calendar events for meeting frequency, and checks Gmail for email thread activity. Runs less frequently than meeting processing (every 4 hours) because these signals change slowly.",
-          "source": "src/roster/signal_aggregator.rs",
-          "decisions": [
-            {
-              "id": "client_roster.signal_aggregator.stripe_matching",
-              "name": "Stripe Customer Matching",
-              "description": "Matches Stripe customers to client records by email address. A client contact's email appearing as a Stripe customer email creates the link. Once linked, subscription status is tracked continuously.",
-              "rationale": "Email is the most reliable cross-system identifier. Stripe customer email matching client contact email is a strong signal that money is flowing for this relationship."
-            },
-            {
-              "id": "client_roster.signal_aggregator.activity_decay",
-              "name": "Activity Decay Detection",
-              "description": "Detects when signals drop off. No meetings in 21+ days with an active client triggers at_risk. No signals of any kind in 60+ days triggers inactive. Decay thresholds are calibrated to the agency's normal cadence - most active clients have weekly or biweekly meetings.",
-              "rationale": "Absence of signals is itself a signal. If a client who had weekly meetings suddenly goes silent for 3 weeks, something changed. The system flags this before anyone notices."
-            }
-          ]
-        },
-        {
-          "id": "client_roster.query_api",
-          "name": "Roster Query Endpoints",
-          "description": "API endpoints that Barbara and the UI consume. Returns current client state, team assignments, and transition history. Barbara calls this when processing meetings or triaging emails to get context about who she's dealing with.",
-          "source": "src/roster/api.rs",
-          "decisions": [
-            {
-              "id": "client_roster.query_api.context_injection",
-              "name": "Roster Context in Barbara's System Prompt",
-              "description": "When Barbara processes a meeting or email, the roster for relevant clients is injected into her system prompt. She doesn't have to call an API - the context is already there. This means her task assignments and routing decisions are informed by the roster automatically.",
-              "rationale": "Making Barbara call an API for roster data adds latency and complexity. Injecting it into the prompt means she has the context immediately and can use it naturally in her reasoning."
-            }
-          ]
-        },
-        {
-          "id": "client_roster.bootstrap",
-          "name": "Cold Start Bootstrap",
-          "description": "One-time initialization that runs when the roster system is first deployed. Sweeps existing meeting recordings, Stripe customers, and recent calendar/email activity to build the initial roster state. After bootstrap, the system maintains state incrementally from new signals.",
-          "source": "src/roster/bootstrap.rs",
-          "decisions": [
-            {
-              "id": "client_roster.bootstrap.lookback_window",
-              "name": "90-Day Lookback for Bootstrap",
-              "description": "Bootstrap analyzes the last 90 days of meetings, payments, and email activity. This is long enough to capture most active client relationships but short enough to avoid processing ancient history.",
-              "rationale": "90 days covers roughly one billing cycle for monthly clients and captures the cadence of even the least-frequent meeting schedules. Going further back risks misclassifying churned clients as active."
-            }
-          ]
-        }
-      ]
-    },
-    {
       "id": "database",
       "name": "Database",
       "intent": "Persists all application state - users, sessions, OAuth tokens, chat history, and integration credentials. The single source of truth for who's logged in, what they've said, and what services they've connected.",
@@ -1561,33 +1944,33 @@
     },
     {
       "from": "meeting_review.pipeline",
-      "to": "client_roster.transcript_analyzer",
-      "description": "After Barbara Ann extracts tasks from a meeting, the transcript analyzer runs on the same transcript to detect client relationship signals and update the roster"
+      "to": "crm.ingest_meeting",
+      "description": "After processing a meeting recording, the pipeline sends the transcript, attendees, and extracted tasks to the CRM for attachment to the client"
     },
     {
-      "from": "client_roster.signal_aggregator",
-      "to": "stripe.tools",
-      "description": "Signal aggregator queries Stripe subscription and payment status to confirm or update client payment state"
+      "from": "email_triage.pipeline",
+      "to": "crm.ingest_comms",
+      "description": "Processed emails with AI summaries are attached to the matching client in the CRM"
     },
     {
-      "from": "client_roster.signal_aggregator",
-      "to": "calendar.get_events",
-      "description": "Signal aggregator scans team calendars for meeting frequency patterns with each client's contacts"
+      "from": "crm.ingest_meeting",
+      "to": "client.status_evaluation",
+      "description": "After attaching a meeting to a client, Barbara evaluates whether the interaction changes the client's status or manager assignment"
     },
     {
-      "from": "client_roster.signal_aggregator",
-      "to": "gmail.search",
-      "description": "Signal aggregator checks recent email thread activity between team members and client contacts"
-    },
-    {
-      "from": "client_roster.query_api",
+      "from": "crm.query",
       "to": "meeting_review.pipeline",
-      "description": "Roster context is injected into Barbara Ann's system prompt when processing meetings, so task assignments are informed by who owns the client"
+      "description": "Barbara's system prompt is injected with CRM context about the client when processing meetings, so task assignments are informed by who manages the client"
     },
     {
-      "from": "client_roster.query_api",
+      "from": "crm.query",
       "to": "email_triage.pipeline",
-      "description": "Roster context is injected when triaging emails, so Barbara knows which team member should handle emails from a given client"
+      "description": "CRM context is injected when triaging emails so Barbara knows which team member should handle emails from a given client"
+    },
+    {
+      "from": "crm.ingest_comms",
+      "to": "stripe.tools",
+      "description": "During ingestion, Stripe is checked for payment status to confirm or update client payment state"
     }
   ]
 }
