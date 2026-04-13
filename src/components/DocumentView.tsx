@@ -7,7 +7,7 @@ import {
   chatEndpoint, toolExecutor, claudeClient, toolDefinitions,
   meetingPipeline, meetingPolling, meetingChatEndpoint,
   gmailClient, gmailTools, calendarClient, calendarTools,
-  recorderTools, chadAdsTools, tasksTools, tasksClient, stripeTools,
+  recorderTools, chadAdsTools, chadAdsClient, tasksTools, tasksClient, stripeTools,
   adminDelegation, authOauth,
   mainServer, databaseLayer,
   emailTriageUI, emailAPI,
@@ -66,7 +66,8 @@ const codeMap: Record<string, { label: string; annotation: CodeAnnotation }[]> =
     { label: "tools/recorder.rs - Recording search and transcripts (6 functions)", annotation: recorderTools },
   ],
   "chad_ads": [
-    { label: "tools/chad_ads.rs - Google Ads conversational interface (3 functions)", annotation: chadAdsTools },
+    { label: "tools/chad_ads.rs - Google Ads tool handlers (3 functions)", annotation: chadAdsTools },
+    { label: "chad_ads/client.rs - Chad Ads API client (5 functions)", annotation: chadAdsClient },
   ],
   "google_tasks": [
     { label: "tools/tasks.rs - Google Tasks tool handlers (12 functions)", annotation: tasksTools },

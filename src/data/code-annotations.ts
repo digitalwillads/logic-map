@@ -963,6 +963,74 @@ export const chadAdsTools: CodeAnnotation = {
 }`,
       explanation: "When listing Google Ads accounts, if there's only one, it's auto-selected - no need to ask 'which account?' every time. For users managing multiple client accounts, it shows a list and asks Claude to use select_customer with the right ID. The selected customer_id is stored in the database so it persists across sessions.",
     },
+    {
+      title: "Customer selection",
+      code: `pub async fn select_customer(
+    app_state: &AppState, user_id: i32, customer_id: &str,
+) -> ToolResult {
+    // Verify Chad Ads token exists before updating
+    let token = database::get_chad_ads_token(&mut conn, user_id)?
+        .ok_or("No Chad Ads token found - connect your account first")?;
+
+    // Update the selected customer_id in the database
+    database::update_chad_ads_customer_id(&mut conn, user_id, customer_id)?;
+
+    ToolResult::success(format!("Selected customer account: {}", customer_id))
+}`,
+      explanation: "Sets the active Google Ads customer account for future queries. Verifies the user has connected their Chad Ads account first. The customer_id is stored in the database so it persists - the user doesn't have to select their account every session. Used when list_customers returns multiple accounts and Claude needs the user to pick one.",
+    },
+  ],
+};
+
+export const chadAdsClient: CodeAnnotation = {
+  file: "src/chad_ads/client.rs",
+  sections: [
+    {
+      title: "Streaming conversation with Chad Ads API",
+      code: `pub struct ChadAdsClient {
+    client: reqwest::Client,
+    admin_secret: String,
+    user_token: String,
+    customer_id: i64,
+}
+
+impl ChadAdsClient {
+    pub async fn send_message(
+        &self, messages: &[ChadAdsMessage], customer_id: i64,
+    ) -> Result<ChadAdsResponse, String> {
+        let request = json!({
+            "admin_secret": self.admin_secret,
+            "user_token": self.user_token,
+            "customer_id": customer_id,
+            "messages": messages,
+        });
+
+        // Chad Ads API returns SSE stream of text chunks + usage stats
+        let response = self.client.post("https://chad-ads-api.example.com/chat")
+            .json(&request).send().await?;
+
+        // Accumulate streamed text chunks
+        let mut full_text = String::new();
+        let mut usage = None;
+        // ... SSE parsing loop ...
+
+        Ok(ChadAdsResponse { text: full_text, usage })
+    }
+
+    pub async fn list_customers(&self) -> Result<Vec<ChadCustomer>, String> {
+        // GET request to list all customer accounts accessible to this user
+    }
+
+    pub async fn get_auth_url(
+        client: &reqwest::Client, admin_secret: &str, callback_url: &str,
+    ) -> Result<String, String> {
+        // Requests OAuth URL from Chad Ads API
+        // callback_url includes the user's auth_token in the state parameter
+        // so we can link the Chad Ads token back to the right user
+    }
+}`,
+      explanation: "The HTTP client that talks to the Chad Ads API. send_message streams the response (SSE) and accumulates text chunks into a single response. Three credentials are needed: admin_secret (app-level), user_token (user-level, from OAuth), and customer_id (which ad account to query). get_auth_url generates the OAuth URL for connecting a user's Google Ads account - the callback URL embeds the user's auth_token so the callback handler knows which user to associate the Chad Ads token with.",
+    },
   ],
 };
 
