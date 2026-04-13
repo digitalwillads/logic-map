@@ -262,12 +262,15 @@ function OverviewPage({
   logicMap: LogicMap;
   onNavigate: (id: string) => void;
 }) {
-  // Count totals
+  // Count totals (including children)
+  let totalSystems = 0;
   let totalFunctions = 0;
   let totalDecisions = 0;
   let totalRelationships = logicMap.relationships.length;
+  let totalCodeFiles = Object.values(codeMap).reduce((sum, files) => sum + files.length, 0);
 
   const countSystem = (s: System) => {
+    totalSystems++;
     totalFunctions += s.functions.length;
     for (const fn of s.functions) totalDecisions += fn.decisions.length;
     for (const c of s.children || []) countSystem(c);
@@ -284,7 +287,7 @@ function OverviewPage({
 
       <div className="overview-stats">
         <div className="stat">
-          <span className="stat-number">{logicMap.systems.length}</span>
+          <span className="stat-number">{totalSystems}</span>
           <span className="stat-label">systems</span>
         </div>
         <div className="stat">
@@ -298,6 +301,10 @@ function OverviewPage({
         <div className="stat">
           <span className="stat-number">{totalRelationships}</span>
           <span className="stat-label">connections</span>
+        </div>
+        <div className="stat">
+          <span className="stat-number">{totalCodeFiles}</span>
+          <span className="stat-label">annotated files</span>
         </div>
       </div>
 
