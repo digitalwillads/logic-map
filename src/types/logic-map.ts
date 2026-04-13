@@ -30,6 +30,10 @@ export interface System {
   who?: string;
   limitations?: string[];
   history?: string[];
+  config?: { name: string; description: string }[];
+  dependencies?: string[];
+  failure_modes?: string[];
+  validation?: string[];
   screenshot?: string;
   uncertain?: boolean;
   uncertainty_note?: string;

@@ -682,6 +682,96 @@
   line-height: 1.55;
 }
 
+/* ---- Config ---- */
+.config-list {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.config-item {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid #f3f4f6;
+  font-size: 13px;
+}
+
+.config-item:last-child {
+  border-bottom: none;
+}
+
+.config-item:nth-child(even) {
+  background: #fafafa;
+}
+
+.config-name {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 12px;
+  color: #111827;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.config-desc {
+  color: #6b7280;
+}
+
+/* ---- Dependencies ---- */
+.dep-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.dep-list li {
+  font-size: 14px;
+  color: #4b5563;
+  line-height: 1.6;
+  padding: 6px 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.dep-list li:last-child {
+  border-bottom: none;
+}
+
+/* ---- Failure Modes ---- */
+.failure-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.failure-item {
+  font-size: 14px;
+  color: #7f1d1d;
+  line-height: 1.6;
+  padding: 10px 14px;
+  background: #fef2f2;
+  border-left: 3px solid #fca5a5;
+  border-radius: 0 6px 6px 0;
+}
+
+/* ---- Validation ---- */
+.validation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.validation-item {
+  font-size: 14px;
+  color: #065f46;
+  line-height: 1.6;
+  padding: 10px 14px;
+  background: #ecfdf5;
+  border-left: 3px solid #6ee7b7;
+  border-radius: 0 6px 6px 0;
+}
+
 /* ---- Code links ---- */
 .code-links-section {
   margin-top: 32px;

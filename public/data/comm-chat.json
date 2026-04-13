@@ -12,6 +12,27 @@
       "description": "Receives chat requests via SSE, runs a loop of Claude reasoning and tool execution (up to 50 iterations), and streams text, tool calls, and tool results back to the frontend in real-time.",
       "why": "The team needed a single place to interact with all their work tools through natural language instead of switching between Gmail, Calendar, Google Ads, and Slack constantly. Instead of learning each tool's interface, they chat with Claude and it handles the tool switching.",
       "who": "All team members use this daily. Will uses it most heavily for client management, ad performance review, and email triage. Team members use it for checking schedules, finding meeting notes, and managing tasks.",
+      "config": [
+        {"name": "ANTHROPIC_API_KEY", "description": "Claude API key for all AI interactions"},
+        {"name": "PORT", "description": "Server port (default 3000)"}
+      ],
+      "dependencies": [
+        "Anthropic Claude API (Sonnet for main, Opus for advisor)",
+        "SQLite database",
+        "All integration clients (Gmail, Calendar, etc.)"
+      ],
+      "failure_modes": [
+        "Claude API down: chat returns error, no fallback",
+        "Database locked: requests wait up to 5s (busy_timeout), then fail",
+        "Tool timeout (300s): tool returns error, Claude sees the error and can try alternative approach",
+        "SSE connection drops: client can reconnect and catch up from last saved message"
+      ],
+      "validation": [
+        "Check that Claude's tool calls match user intent - review chat logs for cases where Claude called the wrong tool or misunderstood the request",
+        "Monitor tool call success rates - a spike in tool errors suggests an API change or scope issue",
+        "Verify progressive DB saves by killing the server mid-stream and checking that partial responses were saved",
+        "Test the 50-iteration limit by asking Claude to do something that requires many steps - it should complete or gracefully stop, not hang"
+      ],
       "limitations": [
         "Tool calls are sequential, not parallel - a complex request touching 5 tools takes 5x as long as it could",
         "Chat history loses tool context between sessions - Claude can see what it said but not what tools it used to get there",
@@ -169,6 +190,27 @@
           "description": "Gmail API integration with full email lifecycle: search, read, send (with confirmation), reply, reply-all, and draft. Handles RFC 2822 message construction, multi-part MIME parsing, and Gmail deep link generation. Admin users can search other team members' inboxes via delegation.",
           "why": "Email is the team's primary communication channel with clients. Being able to search, read, and reply to emails through chat saves constant context-switching between the chat interface and Gmail.",
           "who": "All team members, especially Will who manages client relationships directly. Admin delegation lets Will check team members' inboxes when covering for them.",
+          "config": [
+            {"name": "GOOGLE_CLIENT_ID", "description": "Shared OAuth credentials"},
+            {"name": "GOOGLE_CLIENT_SECRET", "description": "Shared OAuth credentials"}
+          ],
+          "dependencies": [
+            "Google Gmail API",
+            "Google OAuth tokens (refreshed per-call)",
+            "Service account (for admin delegation)"
+          ],
+          "failure_modes": [
+            "Token expired and refresh fails: tool returns scope error, Claude asks user to re-authorize",
+            "Email body too large: truncated at 256KB, user may miss content at the end",
+            "Gmail API rate limited: tool returns error, Claude can retry or inform user",
+            "RFC 2822 construction fails: send/reply fails, draft can still be saved"
+          ],
+          "validation": [
+            "Send a test email via Claude and verify it arrives with correct formatting, recipients, and threading",
+            "Verify reply threading by replying to an email and checking it appears in the correct Gmail thread",
+            "Test admin delegation by searching another team member's inbox and verifying results match their actual emails",
+            "Check that the user_confirmed gate cannot be bypassed - ask Claude to send an email without confirmation and verify it refuses"
+          ],
           "limitations": [
             "Full email bodies are fetched for every message in search results, making large searches slow",
             "HTML emails are converted to plain text, which sometimes loses formatting and makes the content hard to read",
@@ -296,6 +338,21 @@
           "description": "Google Calendar API integration for reading events across all of a user's calendars. Handles timezone conversion, multi-calendar aggregation, deduplication, and attendee details. Admin users can query other team members' calendars via delegation.",
           "why": "Meeting prep is a big part of the team's workflow - knowing who you're meeting with, what was discussed last time, and what's coming up. Calendar access through chat makes this information instantly available.",
           "who": "All team members for checking their schedules. Will uses it heavily before client calls to review upcoming meetings and attendee context.",
+          "config": [],
+          "dependencies": [
+            "Google Calendar API",
+            "Google OAuth tokens"
+          ],
+          "failure_modes": [
+            "Timezone extraction fails: defaults to UTC (+00:00), dates may be off by hours",
+            "One calendar errors: that calendar is skipped, events from other calendars still return",
+            "Event deduplication by iCalUID: same event with different UIDs shows as duplicates"
+          ],
+          "validation": [
+            "Query events for today and verify they match what's actually on the calendar",
+            "Test timezone handling by querying events at day boundaries (11pm, midnight, 1am) and checking the right day's events return",
+            "Verify multi-calendar aggregation by creating an event on a shared calendar and confirming it appears in search results"
+          ],
           "limitations": [
             "Read-only access - Claude cannot create, modify, or delete calendar events",
             "All-day events show as date strings without time, which can be confusing",
@@ -371,6 +428,23 @@
           "description": "Integration with the agency's meeting recording service. Searches for recordings by calendar event ID, participant, or date. Fetches full transcripts with speaker identification and timestamps. Non-admin users only see recordings they participated in.",
           "why": "Meeting recordings and transcripts are valuable but hard to access after the fact. Being able to ask Claude 'what did we discuss in the meeting with Client X last Tuesday?' and get an answer from the transcript is a huge time saver.",
           "who": "Will primarily, for reviewing client meeting discussions and extracting context. Also feeds into the meeting review pipeline for automated task extraction.",
+          "config": [
+            {"name": "SEARCH_API_KEY", "description": "API key for the recording service"}
+          ],
+          "dependencies": [
+            "Meeting recording service API",
+            "Google Calendar API (for event-to-recording linking)"
+          ],
+          "failure_modes": [
+            "Recording not linked to calendar event: falls back to participant search, then transcript search",
+            "Transcript still processing: no segments returned, recording skipped",
+            "Non-admin user searches recording they didn't attend: filtered out, returns no results"
+          ],
+          "validation": [
+            "Test the three-step fallback chain: search by event ID, then by participant, then by transcript content - verify each step finds the right recording",
+            "Verify non-admin users can only see their own recordings",
+            "Check transcript formatting - speaker labels should be correct and timestamps should match the recording"
+          ],
           "limitations": [
             "Not all meetings have recordings - only those with the recording bot enabled",
             "Transcript quality varies with audio quality and number of speakers",
@@ -441,6 +515,25 @@
           "description": "Integration with the Chad Ads API, which provides a chat-style interface to Google Ads. Multi-turn conversations are tracked per customer (ad account) ID. Supports both read operations (checking metrics) and write operations (creating campaigns, changing budgets) with safety checks for writes.",
           "why": "Will manages Google Ads campaigns for clients and was tired of logging into the Google Ads dashboard to check basic metrics. Being able to ask 'how is the Nzymes campaign performing this week?' in chat is much faster.",
           "who": "Will exclusively - he manages all client ad accounts. Read operations are frequent (checking performance), write operations are rare and require confirmation.",
+          "config": [
+            {"name": "CHAD_ADS_SECRET", "description": "Admin secret for Chad Ads API authentication"}
+          ],
+          "dependencies": [
+            "Chad Ads API (wraps Google Ads)",
+            "SQLite database (for token and conversation storage)"
+          ],
+          "failure_modes": [
+            "Conversation history exceeds 256KB: truncated, losing earlier context in long sessions",
+            "Chad Ads API down: tool returns error, Claude informs user",
+            "Customer not selected: tool returns error asking Claude to call list_customers first",
+            "Empty assistant message in history: filtered out before API call to prevent rejection"
+          ],
+          "validation": [
+            "Ask about campaign performance and verify the numbers match the Google Ads dashboard",
+            "Test multi-turn conversations - ask a follow-up question and verify it has context from the previous answer",
+            "Verify write safety by asking Claude to create a campaign and checking it asks for confirmation first",
+            "Test customer switching - change accounts mid-conversation and verify the history resets"
+          ],
           "limitations": [
             "Conversation history is ephemeral - stored in tool result text, not the database, so it's lost between chat sessions",
             "The history can get truncated at 256KB if a conversation about multiple campaigns gets long",
@@ -536,6 +629,22 @@
           "intent": "Lets Claude and the triage UI create, manage, and organize tasks in Google Tasks. Used both directly through chat and as the backend for meeting review task creation.",
           "why": "The meeting review pipeline needed a way to turn extracted action items into actual trackable tasks. Google Tasks was chosen because the team already uses it and it integrates with Google Calendar.",
           "who": "Used indirectly through the meeting review pipeline (auto-creating tasks from meeting action items) and directly through chat (Claude can create/manage tasks on request).",
+          "config": [],
+          "dependencies": [
+            "Google Tasks API",
+            "Google OAuth tokens",
+            "Service account (for admin delegation to other users' task lists)"
+          ],
+          "failure_modes": [
+            "Task list doesn't exist: creation fails with clear error",
+            "Delegation fails for workspace user: falls back to creating task in current user's account",
+            "Duplicate task detection: skips if same title already exists in the list"
+          ],
+          "validation": [
+            "Create a task via Claude and verify it appears in Google Tasks with correct title, notes, and due date",
+            "Test the meeting review approval flow end-to-end: approve a draft task and verify it appears in the assignee's Google Tasks",
+            "Verify deduplication by approving the same task twice - it should only create one Google Task"
+          ],
           "limitations": [
             "Google Tasks has a flat hierarchy - no sub-tasks beyond one level of nesting",
             "No due date reminders through the chat interface - users have to check their task lists",
@@ -592,6 +701,22 @@
           "intent": "Admin-only tools for querying Stripe billing data. Lets Claude look up customers, subscriptions, invoices, charges, and disputes for financial reporting and client management.",
           "why": "Will needed to quickly check billing status for clients without logging into the Stripe dashboard. Questions like 'has Client X paid this month?' or 'what's our total MRR?' come up in client management.",
           "who": "Will only - all Stripe tools are admin-gated. Used for financial reporting and checking client payment status.",
+          "config": [
+            {"name": "STRIPE_API_KEY", "description": "Stripe secret key for billing queries"}
+          ],
+          "dependencies": [
+            "Stripe API"
+          ],
+          "failure_modes": [
+            "Invalid customer ID: Stripe returns 404, tool shows clear error",
+            "Date range parsing fails: falls back to no date filter, returns all results",
+            "API rate limited: tool returns error"
+          ],
+          "validation": [
+            "Query invoices and verify amounts match the Stripe dashboard",
+            "Test currency formatting with a non-USD invoice to verify zero-decimal currency handling",
+            "Verify admin-only access by attempting Stripe tools as a non-admin user - should be rejected"
+          ],
           "limitations": [
             "Read-only - cannot create charges, refund payments, or modify subscriptions through chat",
             "No revenue aggregation or MRR calculation built in - Claude has to do the math from raw invoice/subscription data",
@@ -627,6 +752,28 @@
       "description": "Google OAuth flow with scope tracking, token refresh, admin detection, and session management. Users log in with Google, get a session token stored in localStorage, and their OAuth tokens are refreshed proactively before every API call.",
       "why": "Everyone on the team already has Google Workspace accounts, so OAuth was the natural choice - no separate passwords to manage, and it gives us access to Gmail and Calendar APIs automatically.",
       "who": "All team members authenticate through their @digitalwillads.com Google accounts. Will is the primary admin.",
+      "config": [
+        {"name": "GOOGLE_CLIENT_ID", "description": "OAuth client ID from Google Cloud Console"},
+        {"name": "GOOGLE_CLIENT_SECRET", "description": "OAuth client secret"},
+        {"name": "SERVICE_ACCOUNT_PATH", "description": "Path to service account JSON for admin delegation (default: service_account.json)"}
+      ],
+      "dependencies": [
+        "Google OAuth API",
+        "Google Directory API (for admin detection)",
+        "SQLite database"
+      ],
+      "failure_modes": [
+        "Token refresh fails: falls back to cached access token (may still work if not expired)",
+        "Directory API fails: user treated as non-admin, login continues normally",
+        "Service account JSON missing: admin delegation tools fail, regular tools still work",
+        "Refresh token revoked by user: all API calls fail until user re-authenticates"
+      ],
+      "validation": [
+        "After login, verify the user record was updated (email, name, picture, admin status)",
+        "Test incremental scope authorization - grant gmail.readonly first, then add gmail.send later, verify both work",
+        "Test admin detection with a known admin account and a known non-admin account",
+        "Verify token refresh by waiting for the access token to expire (~1 hour) and confirming the next API call succeeds"
+      ],
       "limitations": [
         "Admin detection is best-effort via Directory API - if that call fails, the user is treated as non-admin until next login",
         "Auth tokens never expire server-side, so old sessions accumulate in the database",
@@ -757,6 +904,30 @@
       "intent": "Automatically processes incoming Gmail messages, filters noise using AI classification, generates summaries, and presents relevant emails for human triage through a dedicated UI tab.",
       "why": "The team was spending 1-2 hours per day just reading and sorting email. Most of it was noise - receipts, calendar invites, newsletters, automated notifications. They were missing important client emails buried in the noise. The triage pipeline filters out the junk and surfaces what matters.",
       "who": "Will primarily, though all team members have it available. Will reviews 30-50 emails per day through the triage queue instead of scrolling through 200+ raw inbox messages.",
+      "config": [
+        {"name": "EMAIL_POLL_INTERVAL_SECS", "description": "Seconds between email polling cycles (default 120)"},
+        {"name": "ANTHROPIC_API_KEY", "description": "Claude API key for AI classification and summarization"}
+      ],
+      "dependencies": [
+        "Gmail API (via OAuth tokens)",
+        "Google Calendar API (for context enrichment)",
+        "Anthropic Claude API (for classification and summarization)",
+        "SQLite database"
+      ],
+      "failure_modes": [
+        "AI classification fails: email is KEPT as fallback (safe default - better to show a noisy email than hide an important one)",
+        "AI summarization fails: email stored without summary, user sees raw snippet instead",
+        "Calendar context fails: email processed without meeting context, summary may be less contextual",
+        "Gmail API rate limited: poll cycle logs error and retries next cycle",
+        "Polling task crashes: restarts on next server boot, emails queue up in Gmail meanwhile"
+      ],
+      "validation": [
+        "Review the filter_reason field on filtered emails - are the AI's reasons sensible? Check for false positives (important emails filtered) and false negatives (noise getting through)",
+        "Compare AI summaries against actual email content - are they accurate and actionable?",
+        "Check that calendar context is being injected by looking for 'Meeting:' references in summaries for emails from people you've met with recently",
+        "Monitor the pending email count - if it's growing faster than you can triage, the filter isn't aggressive enough",
+        "Spot-check filtered emails weekly to catch systematic classification errors (e.g. filtering out a new client's domain)"
+      ],
       "limitations": [
         "AI classification isn't perfect - occasionally filters out an important email or lets noise through",
         "Email polling is every 120 seconds, so there's up to a 2-minute delay. Will be replaced by Gmail webhooks once live for near real-time delivery",
@@ -871,6 +1042,33 @@
       "intent": "Processes meeting recordings, uses an AI agent ('Barbara Ann') to extract action items from transcripts, and presents meetings with their extracted tasks for human review and approval.",
       "why": "After client meetings, action items would get discussed and agreed upon but never tracked. Tasks fell through the cracks because nobody was writing them down consistently. This pipeline automatically extracts tasks from meeting transcripts so nothing gets lost.",
       "who": "Will uses this after every client meeting. The goal is for account managers (Eddie, Reileigh) to use it for their client meetings too.",
+      "config": [
+        {"name": "MEETING_POLL_INTERVAL_SECS", "description": "Seconds between meeting polling cycles (default 300)"},
+        {"name": "SEARCH_API_KEY", "description": "API key for the meeting recording service"},
+        {"name": "ANTHROPIC_API_KEY", "description": "Claude API key for Barbara Ann task extraction"}
+      ],
+      "dependencies": [
+        "Meeting recording service API",
+        "Anthropic Claude API (for Barbara Ann)",
+        "Google Calendar API (for attendee context)",
+        "Gmail API (Barbara Ann can search emails for context)",
+        "Google Tasks API (for creating approved tasks)",
+        "SQLite database"
+      ],
+      "failure_modes": [
+        "Transcript empty: recording skipped entirely (no point extracting tasks from silence)",
+        "Barbara Ann fails to produce valid JSON: meeting stored without draft tasks, user can still review transcript and create tasks manually",
+        "Barbara Ann assigns wrong person: draft tasks are editable before approval - user can correct assignee",
+        "Google Tasks creation fails on approval: task marked as approved in DB but google_task_id is null, can retry later",
+        "Delegation fails for assignee: falls back to creating task in current user's account with a note"
+      ],
+      "validation": [
+        "Review extracted tasks against meeting transcripts - did Barbara Ann catch all the action items? Did she miss any?",
+        "Check assignee accuracy - are the suggested assignees the right people based on who was speaking?",
+        "Verify tasks appear in Google Tasks after approval - check the 'Meeting Action Items' list in each assignee's account",
+        "Monitor the ratio of approved vs rejected tasks - a high rejection rate means Barbara Ann's extraction needs prompt tuning",
+        "Test with a meeting where no action items were discussed - Barbara Ann should return an empty array, not hallucinate tasks"
+      ],
       "limitations": [
         "Barbara Ann (the AI agent) sometimes misidentifies who should own a task, especially when multiple people discuss an action item",
         "Transcript quality depends on the recording service - poor audio leads to poor task extraction",
@@ -976,6 +1174,25 @@
       "description": "SQLite database accessed via Diesel ORM with R2D2 connection pooling. 6 tables covering users, auth tokens, Google tokens, chat threads, chat messages, and Chad Ads tokens. All timestamps are UTC ISO 8601 strings. Migrations run automatically on startup.",
       "why": "SQLite was chosen for simplicity - single-file database, no separate database server to manage, easy to deploy on Fly.io. The application is team-internal with low concurrent usage, so SQLite's limitations aren't a problem.",
       "who": "Internal infrastructure - no team member interacts with this directly.",
+      "config": [
+        {"name": "DATABASE_URL", "description": "Path to SQLite database file (default ./comm-chat.db)"}
+      ],
+      "dependencies": [
+        "SQLite (via Diesel ORM)",
+        "File system (for the .db file)"
+      ],
+      "failure_modes": [
+        "Connection pool exhausted (5 max): requests block until a connection is free or timeout",
+        "WAL checkpoint fails: database grows on disk, performance degrades gradually",
+        "Migration fails on startup: server crashes with error message, must fix migration SQL",
+        "Disk full: all writes fail, reads may still work from WAL cache"
+      ],
+      "validation": [
+        "Check database file size periodically - if it's growing without bound, old records aren't being cleaned up",
+        "Verify that concurrent chat requests don't deadlock by running multiple chats simultaneously",
+        "After a deploy with new migrations, verify the schema matches expectations by checking table structure",
+        "Monitor busy_timeout waits - if requests are frequently waiting 5s for locks, the pool size may need increasing"
+      ],
       "limitations": [
         "SQLite has limited concurrent write support - the WAL mode and busy timeout help but heavy parallel writes can still fail",
         "No data backup strategy documented - the database file is on Fly.io's persistent volume",

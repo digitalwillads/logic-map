@@ -519,6 +519,53 @@ function SystemPage({
         </CollapsibleSection>
       )}
 
+      {/* Config */}
+      {system.config && system.config.length > 0 && (
+        <CollapsibleSection title="Configuration" defaultOpen={false}>
+          <div className="config-list">
+            {system.config.map((c, i) => (
+              <div key={i} className="config-item">
+                <code className="config-name">{c.name}</code>
+                <span className="config-desc">{c.description}</span>
+              </div>
+            ))}
+          </div>
+        </CollapsibleSection>
+      )}
+
+      {/* Dependencies */}
+      {system.dependencies && system.dependencies.length > 0 && (
+        <CollapsibleSection title="Dependencies" defaultOpen={false}>
+          <ul className="dep-list">
+            {system.dependencies.map((d, i) => (
+              <li key={i}>{d}</li>
+            ))}
+          </ul>
+        </CollapsibleSection>
+      )}
+
+      {/* Failure Modes */}
+      {system.failure_modes && system.failure_modes.length > 0 && (
+        <CollapsibleSection title="Failure Modes" defaultOpen={false}>
+          <div className="failure-list">
+            {system.failure_modes.map((f, i) => (
+              <div key={i} className="failure-item">{f}</div>
+            ))}
+          </div>
+        </CollapsibleSection>
+      )}
+
+      {/* Validation */}
+      {system.validation && system.validation.length > 0 && (
+        <CollapsibleSection title="Validation" defaultOpen={false}>
+          <div className="validation-list">
+            {system.validation.map((v, i) => (
+              <div key={i} className="validation-item">{v}</div>
+            ))}
+          </div>
+        </CollapsibleSection>
+      )}
+
       {/* Child systems (integrations) */}
       {hasChildren && (
         <section className="children-section">
