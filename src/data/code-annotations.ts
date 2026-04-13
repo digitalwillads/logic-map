@@ -297,6 +297,44 @@ for iteration in 0..max_iterations {
 }`,
       explanation: "The endpoint returns a Server-Sent Events stream. Two async tasks run: one does the Claude loop and tool execution, the other relays events to the browser. Event types include text (Claude's words appearing), tool_call (which tool is being called), tool_result (what the tool returned), tool_progress (long-running tool updates), and done. The browser renders these in real-time so the user sees Claude thinking and acting.",
     },
+    {
+      title: "Stream lifecycle management",
+      code: `pub async fn start_generation(
+    app_state: &AppState, user_id: i32, thread_id: i32,
+    messages: Vec<UiChatMessage>, user_local_time: String, user_timezone: String,
+) -> Result<String, String> {
+    // Creates a broadcast channel, spawns the generation task
+    // Stores the sender in a global HashMap keyed by stream_id
+    // Returns the stream_id for the client to subscribe with
+}
+
+pub async fn subscribe_stream(
+    State(app_state): State<AppState>,
+    Query(params): Query<SubscribeParams>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    // Looks up the broadcast sender by stream_id
+    // Creates a new receiver and wraps it as an SSE stream
+    // Supports reconnection - if the browser drops, it can re-subscribe
+}
+
+pub async fn stop_stream(
+    State(app_state): State<AppState>,
+    Json(params): Json<StopParams>,
+) -> impl IntoResponse {
+    // Sends a cancel signal to the generation task via the broadcast channel
+    // The generation loop checks for cancellation between tool calls
+    // Gracefully stops without losing already-generated text
+}
+
+pub async fn active_streams(
+    State(app_state): State<AppState>,
+) -> impl IntoResponse {
+    // Returns list of currently active stream_ids
+    // Used by the UI on page load to re-subscribe to in-progress generations
+    // Prevents "lost" streams when the user refreshes mid-generation
+}`,
+      explanation: "The stream lifecycle has four phases: start_generation kicks off the Claude loop and returns a stream_id. subscribe_stream connects the browser to that stream via SSE. stop_stream sends a cancellation signal for the stop button. active_streams lets the UI recover from page refreshes by finding any in-progress generations for the current thread. The broadcast channel pattern means multiple subscribers can connect (useful for reconnection).",
+    },
   ],
 };
 
@@ -329,6 +367,29 @@ export const toolExecutor: CodeAnnotation = {
     }
 }`,
       explanation: "The dispatcher routes tool calls by name to the right handler. Before executing, each client getter validates OAuth scopes - if the user hasn't granted gmail.send, Claude gets a clear error message telling it to ask the user to authorize. This prevents cryptic 403 errors from Google. The access token is refreshed before every call (proactive, not reactive). Output is truncated at 256KB to prevent context overflow.",
+    },
+    {
+      title: "ToolResult constructors",
+      code: `impl ToolResult {
+    pub fn success(content: String) -> ToolResult {
+        // Creates a successful tool result with the given content
+        // Returned to Claude as the tool's output
+    }
+
+    pub fn success_truncated(content: String) -> ToolResult {
+        // Like success but truncates content to 256KB
+        // Prevents context window overflow from large tool outputs
+        // Used by search_emails, get_email_thread, and other tools
+        // that can return unbounded amounts of data
+    }
+
+    pub fn error(message: String) -> ToolResult {
+        // Creates an error tool result
+        // Claude sees this as a tool failure and can react accordingly
+        // Used for scope errors, missing permissions, invalid inputs
+    }
+}`,
+      explanation: "Three constructors for tool results. success returns the raw output. success_truncated caps at 256KB to prevent context overflow - critical for tools like email search that can return megabytes of data. error gives Claude a clear failure message it can act on (e.g., 'Missing gmail.send scope - ask user to authorize'). Every tool handler returns one of these three.",
     },
   ],
 };
@@ -370,6 +431,17 @@ export const claudeClient: CodeAnnotation = {
     // ... sends request, processes SSE stream ...
 }`,
       explanation: "Builds the API request with three types of tools: (1) custom tools like Gmail/Calendar/Tasks that the ToolExecutor handles, (2) web search (up to 5 searches per response for looking up current information), and (3) an advisor tool that escalates hard questions to Claude Opus (up to 3 uses, with ephemeral caching so repeated similar questions are cheap). The main model is Sonnet for speed, Opus for depth when needed.",
+    },
+    {
+      title: "Message format conversion",
+      code: `pub fn ui_messages_to_api(ui_messages: &[UiChatMessage]) -> Vec<ApiMessage> {
+    // Converts frontend message format to Claude API format
+    // UiChatMessage has role + Vec<UiContentBlock> (Text, Image)
+    // ApiMessage has role + Vec<ContentBlock> (text, image with base64 + media_type)
+    // Handles image blocks by converting to the API's source format
+    // Filters out empty text blocks to avoid API validation errors
+}`,
+      explanation: "Bridge between the frontend's message representation and the Claude API's expected format. The UI stores messages as UiChatMessage with content blocks that can be text or images (from paste). This function converts them to the API's format where images need a source object with type, media_type, and base64 data. Empty text blocks are filtered out because the API rejects them.",
     },
   ],
 };
@@ -495,6 +567,16 @@ export const meetingPolling: CodeAnnotation = {
       explanation: "Similar to email polling but with a seed mode twist: the first poll only fetches 3 recordings per user (to avoid processing a huge backlog on startup), subsequent polls fetch 10. This is the development stopgap - webhooks from the recording service will replace this.",
     },
     {
+      title: "Poll all users for new recordings",
+      code: `pub async fn poll_all_users(app_state: &AppState, seed_mode: bool) -> Result<usize, String> {
+    // Iterates all users with stored Google tokens
+    // Calls poll_user_meetings for each user
+    // Returns count of users polled
+    // Errors on individual users don't abort the loop
+}`,
+      explanation: "Top-level orchestrator called by the polling loop. Loads all users from the database, iterates through each one, and calls poll_user_meetings. Individual user failures are logged but don't stop processing - if Eddie's account has an expired token, Reileigh's recordings still get processed. Returns the count of users polled for logging.",
+    },
+    {
       title: "Per-user recording fetch",
       code: `pub async fn poll_user_meetings(
     app_state: &AppState, user_id: i32, user_email: &str,
@@ -565,7 +647,7 @@ export const gmailClient: CodeAnnotation = {
     },
     {
       title: "Email body extraction from Gmail's MIME structure",
-      code: `fn extract_body(payload: &GmailPayload) -> (String, String) {
+      code: `pub fn extract_body(payload: &GmailPayload) -> (String, String) {
     // Try direct body first
     if let Some(body) = &payload.body {
         if let Some(data) = &body.data {
@@ -631,6 +713,50 @@ pub fn base64url_encode(data: &str) -> String {
     // Used before sending messages to Gmail API
 }`,
       explanation: "The remaining Gmail client methods. get_thread fetches an entire email conversation. list_messages_by_labels is used by both the email polling loop (filtering to INBOX + UNREAD) and category-based searches (CATEGORY_PRIMARY, etc.). parse_email is the universal translator from Gmail's raw API format to a clean struct. base64url_encode handles Gmail's non-standard base64 variant (no padding, URL-safe characters).",
+    },
+    {
+      title: "Core Gmail client methods - CRUD and helpers",
+      code: `impl GmailClient {
+    pub fn with_user(http_client: reqwest::Client, access_token: String, user_email: String) -> Self {
+        // Constructor that stores the user's email alongside the client
+        // The email is used for building Gmail deep links with authuser param
+    }
+
+    pub async fn get_message(&self, message_id: &str) -> Result<GmailMessage, String> {
+        // GET /gmail/v1/users/me/messages/{id}?format=full
+        // Returns the full message including all headers and MIME parts
+        // Used by email polling, email tools, and reply threading
+    }
+
+    pub async fn list_messages(
+        &self, query: Option<&str>, max_results: u32, page_token: Option<&str>,
+    ) -> Result<GmailMessageList, String> {
+        // GET /gmail/v1/users/me/messages with query parameter
+        // Returns message IDs and thread IDs (not full messages)
+        // Supports Gmail query syntax: from:, to:, subject:, has:, etc.
+    }
+
+    pub async fn send_reply(&self, raw_message: &str, thread_id: &str) -> Result<GmailSendResponse, String> {
+        // POST /gmail/v1/users/me/messages/send with threadId
+        // The raw message must include In-Reply-To and References headers
+        // threadId ensures Gmail groups it with the original conversation
+    }
+
+    pub async fn create_draft(
+        &self, raw_message: &str, thread_id: Option<&str>,
+    ) -> Result<GmailDraftResponse, String> {
+        // POST /gmail/v1/users/me/drafts
+        // Creates a draft without sending - safe for review
+        // Optional threadId links the draft to an existing conversation
+    }
+
+    pub fn extract_header(payload: &GmailPayload, name: &str) -> String {
+        // Searches the headers array for a specific header by name
+        // Returns empty string if not found
+        // Used for From, To, Subject, Date, Message-ID, References, etc.
+    }
+}`,
+      explanation: "The core Gmail client methods. with_user is an alternate constructor that stores the user's email for link generation. get_message fetches a single message with full MIME content. list_messages does a Gmail search returning message references (lightweight - full content requires get_message per result). send_reply sends a pre-built RFC 2822 message within an existing thread. create_draft saves a message without sending. extract_header is the utility for pulling specific headers from Gmail's payload structure.",
     },
   ],
 };
@@ -818,6 +944,44 @@ export const calendarClient: CodeAnnotation = {
 }`,
       explanation: "When a user asks 'what's on my calendar tomorrow?', we need to search ALL their calendars - personal, work, shared team calendars. This iterates through each one, deduplicates by iCalUID (the same event on multiple calendars has the same UID), and returns a sorted list. Errors on individual calendars are logged but don't fail the whole query - if one shared calendar is down, the user still sees their other events.",
     },
+    {
+      title: "Core Calendar API methods",
+      code: `pub async fn list_events(
+    &self, calendar_id: &str,
+    time_min: Option<&str>, time_max: Option<&str>,
+    query: Option<&str>, max_results: u32, time_zone: Option<&str>,
+) -> Result<Vec<CalendarEvent>, String> {
+    // GET /calendar/v3/calendars/{calendarId}/events with pagination
+    // Filters by time range, search query, and timezone
+}
+
+pub async fn get_event(
+    &self, calendar_id: &str, event_id: &str,
+) -> Result<CalendarEvent, String> {
+    // GET /calendar/v3/calendars/{calendarId}/events/{eventId}
+    // Returns full event details including attendees, Meet link, description
+}
+
+pub async fn get_timezone(
+    &self, calendar_id: &str,
+) -> Result<String, String> {
+    // GET /calendar/v3/calendars/{calendarId} and extract timeZone field
+    // Used for timezone-aware date handling
+}
+
+pub fn parse_event(event: &CalendarEvent, source_calendar: &str) -> ParsedEvent {
+    // Transforms raw Calendar API response into a clean struct
+    // Extracts: title, start/end times, attendees, organizer, Meet link, location
+    // Handles both dateTime (timed events) and date (all-day events)
+}
+
+pub fn format_event_time(event: &ParsedEvent) -> String {
+    // Formats event start/end into human-readable string
+    // All-day events show just the date
+    // Timed events show "10:00 AM - 11:00 AM" in the user's timezone
+}`,
+      explanation: "The lower-level Calendar client methods. list_events queries a single calendar with optional filters. get_event fetches full details for one event (used by the two-step event-to-transcript lookup). get_timezone reads the calendar's timezone setting. parse_event is the universal translator from Google's API format to a clean struct, handling both all-day and timed events. format_event_time produces human-readable time strings for display.",
+    },
   ],
 };
 
@@ -907,6 +1071,75 @@ pub async fn search_transcripts(
 }`,
       explanation: "search_recordings_by_date finds recordings from a specific day - useful when the user says 'what meetings did I have on Tuesday?' without naming a specific meeting. search_transcripts is the last resort in the fallback chain - full-text search across all transcript content for when you can't find a recording by event ID or participant. It searches the spoken words themselves, so 'find the meeting where we discussed the Q2 budget' can find it even without knowing who was there.",
     },
+    {
+      title: "Event and participant-based recording search",
+      code: `pub async fn search_recording_by_event(
+    client: &RecorderClient, event_id: &str, user_email: Option<&str>,
+) -> ToolResult {
+    // Finds recordings linked to a specific calendar event ID
+    // Returns recording metadata: name, date, duration, attendees, has_transcript
+    // Used as the first step before fetching a transcript
+}
+
+pub async fn search_recordings_by_participant(
+    client: &RecorderClient, participant: &str, user_email: Option<&str>,
+    limit: u32, offset: u32,
+) -> ToolResult {
+    // Searches recordings where a specific person was an attendee
+    // Matches by name or email
+    // Used when user says "find my meetings with Sarah"
+    // Returns list with pagination support
+}`,
+      explanation: "Two targeted recording search tools. search_recording_by_event is used when Claude has a calendar event ID and needs to find the corresponding recording - the most precise lookup. search_recordings_by_participant finds recordings involving a specific person, matched by name or email. Both are used by the chat tools to help users find recordings without knowing the exact recording ID.",
+    },
+  ],
+};
+
+// ============================================================
+// RECORDER CLIENT
+// ============================================================
+
+export const recorderClient: CodeAnnotation = {
+  file: "src/recorder/client.rs",
+  sections: [
+    {
+      title: "Recording service HTTP client",
+      code: `impl RecorderClient {
+    pub async fn get_transcript(
+        &self, recording_id: &str,
+    ) -> Result<TranscriptResponse, String> {
+        // GET /api/recordings/{id}/transcript
+        // Returns segments with speaker labels, timestamps, and text
+        // Used by both the meeting pipeline and the chat transcript tools
+    }
+
+    pub async fn search_by_event(
+        &self, event_id: &str,
+    ) -> Result<RecordingSearchResult, String> {
+        // GET /api/recordings?event_id={event_id}
+        // Finds recordings linked to a specific calendar event
+        // Most precise recording lookup method
+    }
+
+    pub async fn search_by_participant(
+        &self, email: Option<&str>, name: Option<&str>,
+        limit: u32, offset: u32,
+    ) -> Result<Vec<Recording>, String> {
+        // GET /api/recordings?participant={email_or_name}&limit={}&offset={}
+        // Searches by participant email or name
+        // Used by meeting polling and chat tools
+    }
+
+    pub async fn search_by_date(
+        &self, date: &str, timezone: Option<&str>,
+    ) -> Result<Vec<Recording>, String> {
+        // GET /api/recordings?date={date}&timezone={tz}
+        // Finds all recordings from a specific day
+        // Timezone parameter ensures correct day boundary
+    }
+}`,
+      explanation: "The HTTP client for the recording service (Cloudflare R2 storage). get_transcript fetches the full transcript with speaker-labeled segments. search_by_event is the most precise lookup - calendar event ID to recording. search_by_participant finds recordings involving a specific person. search_by_date finds recordings from a given day. All methods are used by both the meeting polling pipeline (for background processing) and the chat tools (for user-initiated searches).",
+    },
   ],
 };
 
@@ -995,6 +1228,10 @@ export const chadAdsClient: CodeAnnotation = {
 }
 
 impl ChadAdsClient {
+    pub fn customer_id(&self) -> i64 {
+        self.customer_id
+    }
+
     pub async fn send_message(
         &self, messages: &[ChadAdsMessage], customer_id: i64,
     ) -> Result<ChadAdsResponse, String> {
@@ -1288,7 +1525,16 @@ export const emailChatEndpoint: CodeAnnotation = {
   sections: [
     {
       title: "Email-specific system prompt and send confirmation logic",
-      code: `let system_prompt = format!(
+      code: `pub async fn email_chat_stream(
+    State(app_state): State<AppState>,
+    Json(params): Json<EmailChatParams>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    // Entry point for email triage chat
+    // Loads the email queue entry to inject context into the system prompt
+    // Uses the same streaming infrastructure as the main chat endpoint
+}
+
+let system_prompt = format!(
     "You are a concise email assistant. The user is reviewing an email and may want to reply.\\n\\n\
      Email context:\\n\
      From: {sender}\\nSubject: {subject}\\nBody:\\n{body}\\n\\n\
@@ -1316,7 +1562,17 @@ export const meetingChatEndpoint: CodeAnnotation = {
   sections: [
     {
       title: "Meeting-specific tools for task management",
-      code: `// Three inline tools added on top of the standard tool set
+      code: `pub async fn meeting_chat_stream(
+    State(app_state): State<AppState>,
+    Json(params): Json<MeetingChatParams>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    // Entry point for meeting review chat
+    // Loads meeting entry, transcript, and draft tasks to inject into system prompt
+    // Adds three meeting-specific inline tools on top of the standard tool set
+    // Uses the same streaming infrastructure as the main chat endpoint
+}
+
+// Three inline tools added on top of the standard tool set
 let meeting_tools = vec![
     ToolDefinition {
         name: "update_meeting_task".to_string(),
@@ -1448,12 +1704,61 @@ export const adminDelegation: CodeAnnotation = {
 }`,
       explanation: "Lists all users in the @digitalwillads.com Google Workspace domain. Handles pagination (Google returns max 200 users per page). Used by the 'list workspace users' admin tool so Claude can help Will find team members' emails, check who's in the directory, etc. The admin access token comes from the same service account delegation mechanism.",
     },
+    {
+      title: "Delegated client constructors for Gmail, Calendar, Tasks",
+      code: `pub async fn create_delegated_gmail_client(
+    http_client: &reqwest::Client, target_email: &str,
+) -> Result<GmailClient, String> {
+    // Gets a delegated access token with gmail.readonly scope
+    // Returns a GmailClient configured to act as target_email
+    // Used by admin tools to search other team members' inboxes
+}
+
+pub async fn create_delegated_calendar_client(
+    http_client: &reqwest::Client, target_email: &str,
+) -> Result<CalendarClient, String> {
+    // Gets a delegated access token with calendar.readonly scope
+    // Returns a CalendarClient configured to act as target_email
+    // Used by admin tools to view other team members' calendars
+}
+
+pub async fn create_delegated_tasks_client(
+    http_client: &reqwest::Client, target_email: &str,
+) -> Result<TasksClient, String> {
+    // Gets a delegated access token with tasks scope
+    // Returns a TasksClient configured to act as target_email
+    // Used by meeting review to create tasks in assignees' accounts
+}`,
+      explanation: "Convenience constructors that wrap get_delegated_access_token for each Google service. Each calls get_delegated_access_token with the appropriate scope, then constructs the service-specific client. create_delegated_gmail_client and create_delegated_calendar_client are used by admin tools. create_delegated_tasks_client is used by the meeting review pipeline to create tasks directly in a team member's Google Tasks when they're assigned an action item.",
+    },
   ],
 };
 
 // ============================================================
 // AUTHENTICATION
 // ============================================================
+
+export const googleClient: CodeAnnotation = {
+  file: "src/auth/google_client.rs",
+  sections: [
+    {
+      title: "Google OAuth client secret loading and site detection",
+      code: `pub fn new_from_file() -> Result<GoogleClientSecret, String> {
+    // Loads the Google OAuth client_secret.json from disk
+    // Parses the JSON structure: client_id, client_secret, token_uri, auth_uri, redirect_uris
+    // Called once at startup and stored in AppState
+}
+
+pub fn extract_current_site(headers: &HeaderMap) -> String {
+    // Extracts the current site URL from request headers (Origin or Referer)
+    // Used to build the correct redirect_uri for OAuth callbacks
+    // Handles both localhost (dev) and production domains
+    // Falls back to the configured default if no header is present
+}`,
+      explanation: "Two utility functions for OAuth setup. new_from_file loads the Google client_secret.json that contains the app's OAuth credentials - called once at startup. extract_current_site figures out what domain the request came from so the OAuth redirect_uri matches the current environment. This matters because the redirect_uri must exactly match what's registered in the Google Cloud Console, and the app runs on different domains in dev vs production.",
+    },
+  ],
+};
 
 export const authOauth: CodeAnnotation = {
   file: "src/auth/oauth.rs",
@@ -1555,6 +1860,29 @@ pub async fn get_scope_auth_url(auth_token: String) -> Result<String, ServerFnEr
 }`,
       explanation: "Called proactively before every Gmail/Calendar API call. Uses the stored refresh token (which never expires if offline access was granted) to get a fresh access token from Google. The new token is saved to the database. This function is called by the ToolExecutor, the email polling loop, and the meeting polling loop - all sharing the same refresh mechanism.",
     },
+    {
+      title: "OAuth URL generation and Chad Ads connection check",
+      code: `#[server(GetOAuthUrl, "/api")]
+pub async fn get_oauth_url() -> Result<String, ServerFnError> {
+    // Builds Google OAuth consent URL with all required scopes
+    // Includes state parameter for CSRF protection
+    // redirect_uri points to /api/oauth/callback
+}
+
+#[server(GetChadAdsAuthUrl, "/api")]
+pub async fn get_chad_ads_auth_url(auth_token: String) -> Result<String, ServerFnError> {
+    // Requests an OAuth URL from the Chad Ads API
+    // Embeds the user's auth_token in the callback state
+    // so the callback handler can link the Chad Ads token to the right user
+}
+
+#[server(CheckChadAdsConnected, "/api")]
+pub async fn check_chad_ads_connected(auth_token: String) -> Result<bool, ServerFnError> {
+    // Checks if the user has a stored Chad Ads token
+    // Used by the UI to show/hide the "Connect Google Ads" banner
+}`,
+      explanation: "Supporting OAuth functions. get_oauth_url generates the initial Google login URL. get_chad_ads_auth_url generates the OAuth URL for connecting a user's Google Ads account to the Chad Ads service - the auth_token is embedded in the state parameter so the callback can associate the returned token with the correct user. check_chad_ads_connected is a simple boolean check used by the chat page to decide whether to show a 'Connect Google Ads' banner.",
+    },
   ],
 };
 
@@ -1647,6 +1975,21 @@ pub async fn get_calendar_event(
 }`,
       explanation: "list_calendars shows all the user's calendars grouped by visibility - useful when Claude needs to know which calendars to search. get_calendar_event returns full details for a single event including attendees with their RSVP status, Google Meet link (extracted from hangout_link or conference_data), and the event description. Both are read-only operations.",
     },
+    {
+      title: "Primary calendar events lookup",
+      code: `pub async fn get_calendar_events(
+    client: &CalendarClient,
+    start_date: Option<&str>, end_date: Option<&str>,
+    user_local_time: &str, user_timezone: &str, progress: ProgressSender,
+) -> ToolResult {
+    // The main "what's on my calendar" tool
+    // Converts date strings to RFC3339 with user's timezone offset
+    // Calls list_events_all_calendars to search across all calendars
+    // Formats results with time, title, attendees, Meet link, and source calendar
+    // Handles both date range queries ("this week") and open-ended ("upcoming")
+}`,
+      explanation: "The primary entry point when Claude needs to look up calendar events. Handles timezone conversion using the user's local time offset, queries across all calendars via list_events_all_calendars, and formats the results for Claude to read. This is the most commonly called calendar tool - used for 'what meetings do I have today', 'what's on my calendar this week', etc.",
+    },
   ],
 };
 
@@ -1682,7 +2025,14 @@ conn.run_pending_migrations(MIGRATIONS)?;`,
     },
     {
       title: "Route registration and background task spawning",
-      code: `// API routes
+      code: `pub fn main() {
+    // Leptos + Axum entry point (uses #[tokio::main] macro)
+    // Initializes tracing, loads env vars, builds DB pool, runs migrations
+    // Constructs AppState with shared reqwest client, DB pool, and config
+    // Registers all routes and spawns background polling tasks
+}
+
+// API routes
 let chat_routes = Router::new()
     .route("/api/chat", post(chat_endpoint::chat_stream))
     .route("/api/chat/stop", post(chat_endpoint::stop_stream))
@@ -1854,6 +2204,58 @@ pub async fn update_email_status_api(
 }`,
       explanation: "When the user archives an email in the triage queue, two things happen: (1) the status is updated in our database (the important part), and (2) the INBOX label is removed from the email in Gmail (best-effort). The Gmail API call is fire-and-forget - if it fails, the email stays in Gmail's inbox but is still marked as processed in our queue. This prevents the email from reappearing in the next triage cycle. Ownership is verified before any action.",
     },
+    {
+      title: "Email queue and filter server functions",
+      code: `#[server(GetEmailQueue, "/api")]
+pub async fn get_email_queue(auth_token: String) -> Result<Vec<EmailQueueItem>, ServerFnError> {
+    // Returns all pending (non-filtered) emails for the authenticated user
+    // Ordered by created_at DESC (newest first)
+    // Drives the email triage card deck UI
+}
+
+#[server(GetEmailContent, "/api")]
+pub async fn get_email_content(auth_token: String, entry_id: i32) -> Result<String, ServerFnError> {
+    // Fetches the full email body for a queue entry
+    // Lazy-loaded when the user navigates to an email in the triage UI
+    // Parses the stored raw_json to extract the body text
+}
+
+#[server(GetEmailQueueEntryApi, "/api")]
+pub async fn get_email_queue_entry_api(
+    auth_token: String, entry_id: i32,
+) -> Result<EmailQueueEntry, ServerFnError> {
+    // Returns full details for a single email queue entry
+    // Used by the email chat endpoint to load context
+}
+
+#[server(GetEmailBadgeCount, "/api")]
+pub async fn get_email_badge_count(auth_token: String) -> Result<i64, ServerFnError> {
+    // Returns count of pending emails for badge display
+    // Lightweight query (just COUNT, no data transfer)
+    // Polled every 30 seconds by the chat page
+}
+
+#[server(GetFilterRules, "/api")]
+pub async fn get_filter_rules(auth_token: String) -> Result<Vec<EmailFilterRule>, ServerFnError> {
+    // Returns all email filter rules for the authenticated user
+    // Displayed in the settings panel for management
+}
+
+#[server(AddFilterRule, "/api")]
+pub async fn add_filter_rule(
+    auth_token: String, rule_type: String, value: String,
+) -> Result<i32, ServerFnError> {
+    // Creates a new email filter rule (sender, domain, or keyword)
+    // Returns the new rule's ID
+}
+
+#[server(DeleteFilterRule, "/api")]
+pub async fn delete_filter_rule(auth_token: String, rule_id: i32) -> Result<(), ServerFnError> {
+    // Deletes an email filter rule by ID
+    // Verifies ownership before deleting
+}`,
+      explanation: "Seven server functions that power the email triage UI. get_email_queue loads the triage card deck. get_email_content lazy-loads email bodies (not preloaded to save bandwidth). get_email_queue_entry_api provides full entry details for the email chat endpoint. get_email_badge_count is a lightweight poll for the tab badge. The three filter rule functions (get, add, delete) manage the user's custom blacklist from the settings panel.",
+    },
   ],
 };
 
@@ -1964,6 +2366,63 @@ pub async fn approve_draft_task_api(
     Ok(())
 }`,
       explanation: "The most complex approval logic in the app. When a draft task is approved: (1) If the assignee is a @digitalwillads.com user, try to create the task directly in THEIR Google Tasks using service account delegation. (2) If delegation fails, fall back to the current user's account with a note. (3) If the assignee is external (not workspace), create in the current user's account. Tasks always go into a 'Meeting Action Items' list (created if it doesn't exist). Deduplication prevents the same task from being created twice if the user clicks Done multiple times. The google_task_id is stored so we can reference it later.",
+    },
+    {
+      title: "Meeting queue and task management server functions",
+      code: `#[server(GetMeetingQueue, "/api")]
+pub async fn get_meeting_queue(auth_token: String) -> Result<Vec<MeetingQueueItem>, ServerFnError> {
+    // Returns all pending meetings for the authenticated user
+    // Ordered by created_at DESC (newest first)
+    // Drives the meeting review card deck UI
+}
+
+#[server(GetMeetingDetail, "/api")]
+pub async fn get_meeting_detail(
+    auth_token: String, meeting_id: i32,
+) -> Result<MeetingDetail, ServerFnError> {
+    // Returns full meeting details including draft tasks
+    // Loads meeting entry + all associated draft tasks from DB
+}
+
+#[server(GetMeetingTranscriptText, "/api")]
+pub async fn get_meeting_transcript_text(
+    auth_token: String, meeting_id: i32,
+) -> Result<String, ServerFnError> {
+    // Returns the stored transcript text for a meeting
+    // Lazy-loaded when user expands the transcript section
+}
+
+#[server(GetMeetingBadgeCount, "/api")]
+pub async fn get_meeting_badge_count(auth_token: String) -> Result<i64, ServerFnError> {
+    // Returns count of pending meetings for badge display
+    // Polled every 30 seconds by the chat page
+}
+
+#[server(MarkMeetingReviewedApi, "/api")]
+pub async fn mark_meeting_reviewed_api(
+    auth_token: String, meeting_id: i32,
+) -> Result<(), ServerFnError> {
+    // Sets meeting status to 'reviewed' with timestamp
+    // Called when user clicks Done on a meeting
+}
+
+#[server(UpdateDraftTaskApi, "/api")]
+pub async fn update_draft_task_api(
+    auth_token: String, task_id: i32, title: Option<String>,
+    suggested_assignee: Option<String>, assignee_email: Option<String>,
+) -> Result<(), ServerFnError> {
+    // Updates a draft task's title and/or assignee
+    // Used by both the meeting review UI and the meeting chat endpoint
+}
+
+#[server(RejectDraftTaskApi, "/api")]
+pub async fn reject_draft_task_api(
+    auth_token: String, task_id: i32,
+) -> Result<(), ServerFnError> {
+    // Marks a draft task as rejected (soft delete)
+    // Called when user removes a task from the meeting review
+}`,
+      explanation: "Seven server functions for the meeting review UI. get_meeting_queue loads the review card deck. get_meeting_detail provides full meeting info with draft tasks. get_meeting_transcript_text lazy-loads transcripts. get_meeting_badge_count powers the tab badge. mark_meeting_reviewed_api finalizes a meeting review. update_draft_task_api and reject_draft_task_api handle individual task management from both the UI and the meeting chat endpoint.",
     },
   ],
 };
@@ -2090,6 +2549,10 @@ export const tasksClient: CodeAnnotation = {
 }
 
 impl TasksClient {
+    pub fn new(client: reqwest::Client, access_token: String) -> Self {
+        Self { client, access_token }
+    }
+
     pub async fn list_task_lists(&self) -> Result<Vec<TaskList>, String> {
         // GET /tasks/v1/users/@me/lists with pagination (maxResults=100)
     }
@@ -2203,6 +2666,10 @@ pub fn delete_chat_message(conn, message_id) { /* ... */ }`,
       title: "Email queue operations (12 functions)",
       code: `pub fn insert_email_queue_entry(conn, gmail_message_id, thread_id, user_id,
     sender, subject, snippet, filtered_out, filter_reason, ai_summary, raw_json) -> Result<i32>
+pub fn get_email_queue_entry(conn, entry_id) -> Result<Option<EmailQueueEntry>> {
+    // Fetches a single email queue entry by ID
+    // Used by email_api to load full details and verify ownership
+}
 pub fn list_pending_emails(conn, user_id) -> Result<Vec<EmailQueueEntry>> {
     // WHERE filtered_out = false AND status = 'pending', ordered by created_at DESC
 }
