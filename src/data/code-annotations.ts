@@ -917,6 +917,105 @@ export const tasksTools: CodeAnnotation = {
 }`,
       explanation: "When the user asks 'what tasks do I have?', this searches across all their task lists - not just one. Sends progress updates for each list being checked so the user sees activity. The output includes checkboxes, due dates, and deep links with the authuser parameter so links open in the correct Google account. Errors on individual lists don't fail the whole query - if one shared list is inaccessible, other tasks still show up.",
     },
+    {
+      title: "Task CRUD operations",
+      code: `pub async fn create_task(
+    client: &TasksClient, tasklist_id: &str,
+    title: &str, notes: Option<&str>, due: Option<&str>,
+    parent: Option<&str>, position: Option<&str>,
+) -> ToolResult {
+    let task = client.create_task(tasklist_id, title, notes, due, parent, position).await?;
+    ToolResult::success(format!("Created task: {} (due: {})", task.title, task.due.unwrap_or("none")))
+}
+
+pub async fn update_task(
+    client: &TasksClient, tasklist_id: &str, task_id: &str,
+    title: Option<&str>, notes: Option<&str>, due: Option<&str>,
+) -> ToolResult {
+    client.update_task(tasklist_id, task_id, title, notes, due).await?;
+    ToolResult::success("Task updated")
+}
+
+pub async fn complete_task(client: &TasksClient, tasklist_id: &str, task_id: &str) -> ToolResult {
+    client.complete_task(tasklist_id, task_id).await?;
+    ToolResult::success("Task marked as completed")
+}
+
+pub async fn delete_task(client: &TasksClient, tasklist_id: &str, task_id: &str) -> ToolResult {
+    client.delete_task(tasklist_id, task_id).await?;
+    ToolResult::success("Task deleted")
+}
+
+pub async fn move_task(
+    client: &TasksClient, tasklist_id: &str, task_id: &str,
+    destination_tasklist_id: Option<&str>, parent: Option<&str>, previous: Option<&str>,
+) -> ToolResult {
+    // Supports moving between lists, nesting under a parent, and reordering
+    client.move_task(tasklist_id, task_id, destination_tasklist_id, parent, previous).await?;
+    ToolResult::success("Task moved")
+}`,
+      explanation: "Standard CRUD for individual tasks. Create supports title, notes, due date, parent task (for nesting), and position. Update can change any combination of title, notes, and due date. Complete marks the task as done. Delete permanently removes it. Move is the most flexible - it can move a task between lists, nest it under a parent task, or reorder it relative to another task. All operations go through the TasksClient which handles the Google Tasks API calls.",
+    },
+    {
+      title: "Task list management",
+      code: `pub async fn list_task_lists(client: &TasksClient, user_email: &str) -> ToolResult {
+    let lists = client.list_task_lists().await?;
+    let formatted = lists.iter().map(|l| {
+        format!("- {} (ID: {})\\n  Link: https://tasks.google.com/list/{}?authuser={}",
+            l.title, l.id, l.id, user_email)
+    }).join("\\n");
+    ToolResult::success(formatted)
+}
+
+pub async fn create_task_list(client: &TasksClient, title: &str) -> ToolResult {
+    let list = client.create_task_list(title).await?;
+    ToolResult::success(format!("Created list: {} (ID: {})", list.title, list.id))
+}
+
+pub async fn update_task_list(client: &TasksClient, list_id: &str, title: &str) -> ToolResult {
+    client.update_task_list(list_id, title).await?;
+    ToolResult::success("Task list renamed")
+}
+
+pub async fn delete_task_list(client: &TasksClient, list_id: &str) -> ToolResult {
+    client.delete_task_list(list_id).await?;
+    ToolResult::success("Task list deleted")
+}`,
+      explanation: "Task list CRUD. Lists show all the user's task lists with direct links. Create makes a new list (used by the meeting review pipeline to create 'Meeting Action Items' if it doesn't exist). Update renames a list. Delete removes a list and all its tasks. The list IDs are used as parameters for all individual task operations.",
+    },
+    {
+      title: "Filtered task listing with date ranges",
+      code: `pub async fn list_tasks(
+    client: &TasksClient, tasklist_id: &str,
+    show_completed: bool,
+    due_min: Option<&str>, due_max: Option<&str>,
+    completed_min: Option<&str>, completed_max: Option<&str>,
+    progress: ProgressSender, user_email: &str,
+) -> ToolResult {
+    let tasks = client.list_tasks(tasklist_id, show_completed,
+        due_min, due_max, completed_min, completed_max).await?;
+
+    // Separate outstanding vs completed
+    let outstanding: Vec<_> = tasks.iter().filter(|t| t.status != "completed").collect();
+    let completed: Vec<_> = tasks.iter().filter(|t| t.status == "completed").collect();
+
+    let mut output = String::new();
+    if !outstanding.is_empty() {
+        output.push_str(&format!("Outstanding ({}):\\n", outstanding.len()));
+        for task in &outstanding {
+            output.push_str(&format!("[ ] {} (due: {})\\n", task.title, task.due.unwrap_or("none")));
+        }
+    }
+    if !completed.is_empty() {
+        output.push_str(&format!("\\nCompleted ({}):\\n", completed.len()));
+        for task in &completed {
+            output.push_str(&format!("[x] {}\\n", task.title));
+        }
+    }
+    ToolResult::success(output)
+}`,
+      explanation: "Lists tasks in a specific list with optional date filtering. Can filter by due date range and completion date range. Separates outstanding from completed tasks in the output so the user sees what's pending first. The show_completed flag controls whether completed tasks are fetched at all (saves API calls when you only care about outstanding work).",
+    },
   ],
 };
 
