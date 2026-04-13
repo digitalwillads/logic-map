@@ -104,7 +104,7 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
     contentRef.current?.scrollTo(0, 0);
   }, [activePage]);
 
-  // Find the active system (could be top-level or a child)
+  // Find the active system (could be top-level, child, or grandchild)
   let activeSystem: System | null = null;
   let parentSystem: System | null = null;
   for (const system of logicMap.systems) {
@@ -118,6 +118,14 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
         parentSystem = system;
         break;
       }
+      for (const grandchild of child.children || []) {
+        if (grandchild.id === activePage) {
+          activeSystem = grandchild;
+          parentSystem = child;
+          break;
+        }
+      }
+      if (activeSystem) break;
     }
     if (activeSystem) break;
   }
@@ -125,7 +133,7 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
   // Build nav with grouped sections
   type NavItem =
     | { type: "header"; label: string }
-    | { type: "link"; id: string; label: string; indent: boolean; color: string };
+    | { type: "link"; id: string; label: string; indent: boolean; color: string; badge?: string };
 
   const navItems: NavItem[] = [];
   const navColors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
@@ -137,10 +145,23 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
   if (isCommChat) {
     // Comm-chat specific grouping
     const chatEngine = logicMap.systems.find((s) => s.id === "chat_engine");
+    const crmIds = ["crm"];
     if (chatEngine) {
       navItems.push({ type: "link", id: chatEngine.id, label: chatEngine.name, indent: false, color: "#3b82f6" });
-      for (const child of chatEngine.children || []) {
-        navItems.push({ type: "link", id: child.id, label: child.name, indent: true, color: "#94a3b8" });
+      const dataSources = (chatEngine.children || []).filter((c) => !crmIds.includes(c.id));
+      if (dataSources.length > 0) {
+        navItems.push({ type: "header", label: "Data Sources" });
+        for (const child of dataSources) {
+          navItems.push({ type: "link", id: child.id, label: child.name, indent: true, color: "#94a3b8" });
+        }
+      }
+      const crm = (chatEngine.children || []).find((c) => c.id === "crm");
+      if (crm) {
+        navItems.push({ type: "header", label: "Data Organization" });
+        navItems.push({ type: "link", id: crm.id, label: crm.name, indent: false, color: "#10b981", badge: "unimplemented" });
+        for (const child of crm.children || []) {
+          navItems.push({ type: "link", id: child.id, label: child.name, indent: true, color: "#10b981" });
+        }
       }
     }
     const automationIds = ["email_triage", "meeting_review"];
@@ -148,7 +169,7 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
     if (automations.length > 0) {
       navItems.push({ type: "link", id: "automation_overview", label: "Chat Automation Tabs", indent: false, color: "#10b981" });
       for (const s of automations) {
-        navItems.push({ type: "link", id: s.id, label: s.name, indent: true, color: "#10b981" });
+        navItems.push({ type: "link", id: s.id, label: s.name, indent: true, color: "#10b981", badge: "pr submitted" });
       }
     }
     const infraIds = ["auth", "database"];
@@ -207,6 +228,7 @@ export function DocumentView({ logicMap }: DocumentViewProps) {
                     style={{ background: item.color }}
                   />
                   {item.label}
+                  {item.badge && <span className="nav-badge">{item.badge}</span>}
                 </a>
               </li>
             )
@@ -504,6 +526,29 @@ function SystemPage({
         <CollapsibleSection title="Data" defaultOpen>
           {system.entities!.map((entity) => (
             <EntityBlock key={entity.id} entity={entity} />
+          ))}
+        </CollapsibleSection>
+      )}
+
+      {/* Functions (how it works step by step) */}
+      {system.functions && system.functions.length > 0 && (
+        <CollapsibleSection title="How It Works" defaultOpen>
+          {system.functions.map((fn) => (
+            <div key={fn.id} className="function-block">
+              <h4 className="fn-title">{fn.name}</h4>
+              <p className="fn-desc">{fn.description}</p>
+              {fn.decisions.length > 0 && (
+                <dl className="def-list fn-decisions">
+                  {fn.decisions.map((d) => (
+                    <div key={d.id} className="def-item">
+                      <dt>{d.name}</dt>
+                      <dd>{d.description}</dd>
+                      {d.rationale && <dd className="rationale">{d.rationale}</dd>}
+                    </div>
+                  ))}
+                </dl>
+              )}
+            </div>
           ))}
         </CollapsibleSection>
       )}

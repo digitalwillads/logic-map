@@ -14,9 +14,6 @@ export function ChatMockup() {
         </div>
         <div className="mock-main">
           <div className="mock-tabs">
-            <span className="mock-tab active">Chat</span>
-            <span className="mock-tab">Email <span className="mock-badge">12</span></span>
-            <span className="mock-tab">Meetings <span className="mock-badge">3</span></span>
           </div>
           <div className="mock-messages">
             <div className="mock-msg user">What's on my calendar tomorrow?</div>

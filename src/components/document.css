@@ -102,6 +102,20 @@
   flex-shrink: 0;
 }
 
+.nav-badge {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #fef3c7;
+  color: #92400e;
+  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 /* ---- Main content ---- */
 .doc-content {
   flex: 1;
@@ -377,6 +391,46 @@
   color: #4b5563;
   line-height: 1.7;
   margin: 0;
+}
+
+/* ---- Functions ---- */
+.function-block {
+  margin-bottom: 28px;
+  padding-bottom: 28px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.function-block:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.fn-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #111827;
+  margin: 0 0 8px;
+}
+
+.fn-desc {
+  font-size: 14px;
+  color: #4b5563;
+  line-height: 1.7;
+  margin: 0 0 12px;
+}
+
+.fn-decisions {
+  margin-top: 8px;
+  padding-left: 16px;
+  border-left: 2px solid #e5e7eb;
+}
+
+.rationale {
+  font-size: 13px;
+  color: #9ca3af;
+  font-style: italic;
+  margin-top: 4px;
 }
 
 /* ---- Entities ---- */
