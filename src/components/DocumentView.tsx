@@ -3,11 +3,16 @@ import type { LogicMap, System } from "../types/logic-map";
 import { ChatMockup, EmailTriageMockup, MeetingReviewMockup } from "./mockups";
 import { CodeView, type CodeAnnotation } from "./CodeView";
 import {
-  emailTriagePipeline, emailTriagePolling,
-  chatEndpoint, toolExecutor, claudeClient,
-  meetingPipeline, meetingPolling,
-  gmailClient, calendarClient,
+  emailTriagePipeline, emailTriagePolling, emailChatEndpoint,
+  chatEndpoint, toolExecutor, claudeClient, toolDefinitions,
+  meetingPipeline, meetingPolling, meetingChatEndpoint,
+  gmailClient, calendarClient, calendarTools,
   recorderTools, chadAdsTools, tasksTools, stripeTools,
+  adminDelegation, authOauth,
+  mainServer,
+  emailTriageUI, emailAPI,
+  meetingReviewUI, meetingAPI,
+  chatPage, chatBox,
 } from "../data/code-annotations";
 import "./document.css";
 
@@ -24,20 +29,35 @@ const codeMap: Record<string, { label: string; annotation: CodeAnnotation }[]> =
     { label: "chat_endpoint.rs - SSE streaming and tool loop", annotation: chatEndpoint },
     { label: "tool_executor.rs - Tool dispatch and scope checking", annotation: toolExecutor },
     { label: "claude_client.rs - API request construction", annotation: claudeClient },
+    { label: "tools/mod.rs - Tool definitions and admin gating", annotation: toolDefinitions },
+    { label: "chat_box.rs - Chat UI and SSE handling", annotation: chatBox },
+    { label: "chat_page.rs - Tab management and badge polling", annotation: chatPage },
+    { label: "main.rs - Server setup and background tasks", annotation: mainServer },
+  ],
+  "auth": [
+    { label: "oauth.rs - Login flow, token refresh, scope management", annotation: authOauth },
+    { label: "admin.rs - Service account delegation and JWT creation", annotation: adminDelegation },
   ],
   "email_triage": [
     { label: "pipeline.rs - Email processing pipeline", annotation: emailTriagePipeline },
     { label: "polling.rs - Background polling loop", annotation: emailTriagePolling },
+    { label: "chat_endpoint.rs - Email-specific chat with send confirmation", annotation: emailChatEndpoint },
+    { label: "email_triage.rs - Triage queue UI component", annotation: emailTriageUI },
+    { label: "email_api.rs - Email queue server functions", annotation: emailAPI },
   ],
   "meeting_review": [
     { label: "pipeline.rs - Barbara Ann task extraction", annotation: meetingPipeline },
     { label: "polling.rs - Recording poll loop", annotation: meetingPolling },
+    { label: "chat_endpoint.rs - Meeting chat with task management tools", annotation: meetingChatEndpoint },
+    { label: "meeting_review.rs - Meeting review UI component", annotation: meetingReviewUI },
+    { label: "meeting_api.rs - Meeting queue and task approval server functions", annotation: meetingAPI },
   ],
   "gmail": [
     { label: "client.rs - Gmail API client", annotation: gmailClient },
   ],
   "calendar": [
     { label: "client.rs - Calendar API client", annotation: calendarClient },
+    { label: "tools/calendar.rs - Timezone handling and event formatting", annotation: calendarTools },
   ],
   "recorder": [
     { label: "tools/recorder.rs - Recording search and transcripts", annotation: recorderTools },

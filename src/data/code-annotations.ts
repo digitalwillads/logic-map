@@ -869,3 +869,778 @@ fn format_amount(cents: i64, currency: &Currency) -> String {
     },
   ],
 };
+
+// ============================================================
+// EMAIL TRIAGE - CHAT ENDPOINT
+// ============================================================
+
+export const emailChatEndpoint: CodeAnnotation = {
+  file: "src/email/chat_endpoint.rs",
+  sections: [
+    {
+      title: "Email-specific system prompt and send confirmation logic",
+      code: `let system_prompt = format!(
+    "You are a concise email assistant. The user is reviewing an email and may want to reply.\\n\\n\
+     Email context:\\n\
+     From: {sender}\\nSubject: {subject}\\nBody:\\n{body}\\n\\n\
+     You have the email's message_id ({message_id}) and thread_id ({thread_id}).\\n\
+     To reply, use reply_to_email or reply_all with these IDs.\\n\\n\
+     SEND CONFIRMATION RULES:\\n\
+     If the user clearly communicates intent to send NOW (e.g. 'tell him X and send it',\\n\
+     'reply saying Y go ahead and send'), draft and send immediately with user_confirmed=true.\\n\
+     Use judgment - the user must be explicitly asking you to send, not just using the word\\n\
+     'send' in passing. 'Send' alone after seeing a draft is confirmation.\\n\
+     'What should I send?' is NOT confirmation.\\n\
+     When in doubt, show the draft and ask to confirm."
+);`,
+      explanation: "The email chat endpoint is a specialized version of the main chat. Key differences: (1) The email body, sender, subject, message_id, and thread_id are pre-loaded into the system prompt so Claude doesn't need to search for them. (2) reply_to_email is preferred over send_email since we already have the IDs. (3) The send confirmation logic has nuanced heuristics - 'tell him X and send it' means send immediately, but 'what should I send?' is a question, not a command. This prevents both accidental sends and unnecessary confirmation prompts.",
+    },
+  ],
+};
+
+// ============================================================
+// MEETING REVIEW - CHAT ENDPOINT
+// ============================================================
+
+export const meetingChatEndpoint: CodeAnnotation = {
+  file: "src/meetings/chat_endpoint.rs",
+  sections: [
+    {
+      title: "Meeting-specific tools for task management",
+      code: `// Three inline tools added on top of the standard tool set
+let meeting_tools = vec![
+    ToolDefinition {
+        name: "update_meeting_task".to_string(),
+        description: "Update a draft task's title or assignee by task number".to_string(),
+        input_schema: json!({
+            "properties": {
+                "task_number": { "type": "integer", "description": "1-based task number" },
+                "title": { "type": "string" },
+                "suggested_assignee": { "type": "string" },
+                "assignee_email": { "type": "string" }
+            },
+            "required": ["task_number"]
+        }),
+    },
+    ToolDefinition {
+        name: "reject_meeting_task".to_string(),
+        description: "Remove a draft task by marking it rejected".to_string(),
+        // ...
+    },
+    ToolDefinition {
+        name: "add_meeting_task".to_string(),
+        description: "Add a new draft task for this meeting".to_string(),
+        // ...
+    },
+];`,
+      explanation: "The meeting chat endpoint adds three tools that the main chat doesn't have: update, reject, and add draft tasks. These are handled inline (not through the ToolExecutor) because they need direct access to the meeting's task list in the database. Task numbers are 1-based so Claude can say 'update task 3' matching what the user sees in the UI. The current task list is reloaded from the database before each tool loop iteration to handle concurrent modifications.",
+    },
+    {
+      title: "Transcript context injection",
+      code: `let transcript_snippet = entry.transcript_text
+    .map(|t| {
+        let bytes = t.as_bytes();
+        if bytes.len() > 15000 {
+            let truncated = std::str::from_utf8(&bytes[..15000])
+                .unwrap_or(&t[..t.len().min(15000)]);
+            format!("{}\\n[...transcript truncated]", truncated)
+        } else { t }
+    })
+    .unwrap_or_default();
+
+let system_prompt = format!(
+    "You are reviewing a meeting. You can modify the draft action items.\\n\\n\
+     Meeting: {name}\\nDate: {date}\\nAttendees: {attendees}\\n\\n\
+     Draft tasks:\\n{task_list}\\n\\n\
+     Transcript:\\n{transcript}",
+);`,
+      explanation: "The meeting's transcript is injected into the system prompt, truncated to 15KB at a UTF-8 boundary to stay within context limits. The draft tasks are listed with their current titles and assignees so Claude can reference them by number. Claude can then use its meeting-specific tools to update, reject, or add tasks based on the conversation with the user.",
+    },
+  ],
+};
+
+// ============================================================
+// ADMIN DELEGATION
+// ============================================================
+
+export const adminDelegation: CodeAnnotation = {
+  file: "src/gmail/admin.rs",
+  sections: [
+    {
+      title: "JWT creation for service account impersonation",
+      code: `pub async fn get_delegated_access_token(
+    http_client: &reqwest::Client,
+    target_email: &str,
+    scopes: &str,
+) -> Result<String, String> {
+    let sa_path = std::env::var("SERVICE_ACCOUNT_PATH")
+        .unwrap_or_else(|_| SERVICE_ACCOUNT_PATH_DEFAULT.to_string());
+    let sa_key: ServiceAccountKey = serde_json::from_reader(File::open(&sa_path)?)?;
+
+    let now = chrono::Utc::now().timestamp();
+    let claims = JwtClaims {
+        iss: sa_key.client_email.clone(),   // service account email
+        sub: target_email.to_string(),       // user to impersonate
+        scope: scopes.to_string(),           // what permissions to request
+        aud: sa_key.token_uri.clone(),       // Google's token endpoint
+        iat: now,                            // issued now
+        exp: now + 3600,                     // expires in 1 hour
+    };
+
+    let header = Header::new(Algorithm::RS256);
+    let key = EncodingKey::from_rsa_pem(sa_key.private_key.as_bytes())?;
+    let jwt = encode(&header, &claims, &key)?;
+
+    // Exchange JWT for access token
+    let response = http_client.post("https://oauth2.googleapis.com/token")
+        .form(&[
+            ("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"),
+            ("assertion", &jwt),
+        ])
+        .send().await?;
+
+    let token_response: TokenResponse = response.json().await?;
+    Ok(token_response.access_token)
+}`,
+      explanation: "This is how admin users access other team members' Gmail and Calendar. A Google service account with domain-wide delegation creates a JWT that says 'I am the service account, let me act as target_email.' The JWT is signed with RS256 using the service account's private key, then exchanged at Google's token endpoint for an access token that has the requested scopes for the target user. The token expires after 1 hour. This is the same pattern used for admin email search, admin calendar access, and admin task management.",
+    },
+    {
+      title: "Workspace user listing via Directory API",
+      code: `pub async fn list_workspace_users(
+    http_client: &reqwest::Client,
+    admin_access_token: &str,
+    domain: &str,
+) -> Result<Vec<DirectoryUserEntry>, String> {
+    let mut all_users = Vec::new();
+    let mut page_token: Option<String> = None;
+
+    loop {
+        let mut url = format!(
+            "https://admin.googleapis.com/admin/directory/v1/users?domain={}&maxResults=200",
+            domain
+        );
+        if let Some(token) = &page_token {
+            url.push_str(&format!("&pageToken={}", token));
+        }
+
+        let response = http_client.get(&url)
+            .bearer_auth(admin_access_token)
+            .send().await?;
+
+        let body: DirectoryResponse = response.json().await?;
+        all_users.extend(body.users);
+
+        match body.next_page_token {
+            Some(token) => page_token = Some(token),
+            None => break,
+        }
+    }
+    Ok(all_users)
+}`,
+      explanation: "Lists all users in the @digitalwillads.com Google Workspace domain. Handles pagination (Google returns max 200 users per page). Used by the 'list workspace users' admin tool so Claude can help Will find team members' emails, check who's in the directory, etc. The admin access token comes from the same service account delegation mechanism.",
+    },
+  ],
+};
+
+// ============================================================
+// AUTHENTICATION
+// ============================================================
+
+export const authOauth: CodeAnnotation = {
+  file: "src/auth/oauth.rs",
+  sections: [
+    {
+      title: "OAuth login flow - code exchange to session token",
+      code: `#[server(RequestOAuthTokens, "/api")]
+pub async fn request_oauth_tokens(authcode: AuthCode) -> Result<String, ServerFnError> {
+    // 1. Exchange auth code for tokens
+    let body = json!({
+        "client_id": client_secret.client_id,
+        "client_secret": client_secret.client_secret,
+        "code": authcode.code,
+        "grant_type": "authorization_code",
+        "redirect_uri": redirect_uri,
+    });
+    let token_response: TokenResponse = client.post(&client_secret.token_uri)
+        .json(&body).send().await?.json().await?;
+
+    // 2. Fetch user profile from Google
+    let user_profile: UserProfile = client
+        .get("https://www.googleapis.com/oauth2/v3/userinfo")
+        .query(&[("access_token", &token_response.access_token)])
+        .send().await?.json().await?;
+
+    // 3. Check admin status (best-effort - doesn't block login)
+    let is_admin = check_admin_status(&client, &token_response.access_token, &user_profile.email).await;
+
+    // 4. Upsert user record (create or update)
+    let user_id = database::upsert_user(&mut conn, &user_profile.sub, &user_profile.email,
+        &user_profile.name, user_profile.picture.as_deref(), is_admin)?;
+
+    // 5. Store OAuth tokens (access + refresh + scopes)
+    database::store_google_tokens(&mut conn, user_id, &token_response.access_token,
+        token_response.refresh_token.as_deref().unwrap_or(""), Some(&token_response.scope))?;
+
+    // 6. Generate session token (UUID stored in auth_tokens table)
+    let auth_token = database::store_auth_token(&mut conn, user_id)?;
+    Ok(auth_token)  // returned to browser, stored in localStorage
+}`,
+      explanation: "The complete login flow in one function. Google redirects back with an auth code, we exchange it for tokens, fetch the user's profile, check if they're an admin (best-effort - failures don't block login), upsert the user record (so profile changes are picked up), store the OAuth tokens, and generate a UUID session token. The session token goes back to the browser and gets stored in localStorage. Every subsequent API call includes this token for authentication.",
+    },
+    {
+      title: "Incremental scope authorization",
+      code: `const REQUIRED_EXTRA_SCOPES: &[(&str, &str)] = &[
+    ("https://www.googleapis.com/auth/gmail.readonly", "Email read access"),
+    ("https://www.googleapis.com/auth/gmail.send", "Email sending"),
+    ("https://www.googleapis.com/auth/calendar.readonly", "Calendar access"),
+    ("https://www.googleapis.com/auth/tasks", "Google Tasks access"),
+];
+
+#[server(CheckMissingScopes, "/api")]
+pub async fn check_missing_scopes(auth_token: String) -> Result<Vec<String>, ServerFnError> {
+    let tokens = database::get_google_tokens(&mut conn, user.id)?;
+    let stored_scopes = tokens.map(|t| t.scopes.unwrap_or_default()).unwrap_or_default();
+
+    let missing: Vec<String> = REQUIRED_EXTRA_SCOPES.iter()
+        .filter(|(scope_url, _)| !stored_scopes.contains(scope_url))
+        .map(|(_, label)| label.to_string())
+        .collect();
+    Ok(missing)
+}
+
+#[server(GetScopeAuthUrl, "/api")]
+pub async fn get_scope_auth_url(auth_token: String) -> Result<String, ServerFnError> {
+    // Build OAuth URL with ONLY the missing scopes
+    // include_granted_scopes=true tells Google to merge with existing grants
+    let params = HashMap::from([
+        ("include_granted_scopes", "true"),
+        ("prompt", "consent"),
+        ("scope", &missing_scope_urls.join(" ")),
+        // ...
+    ]);
+    Ok(url.to_string())
+}`,
+      explanation: "Users don't have to grant all permissions at once. On page load, the UI checks which scopes are missing. If gmail.send isn't granted yet, a banner appears asking the user to authorize email sending. The key is include_granted_scopes=true - this tells Google to ADD the new scope to existing grants, not replace them. Without it, granting gmail.send would revoke gmail.readonly. After authorization, the callback goes through the same login flow and the stored scopes are updated.",
+    },
+    {
+      title: "Token refresh",
+      code: `pub async fn refresh_access_token(app_state: &AppState, user_id: i32) -> Result<String, String> {
+    let tokens = database::get_google_tokens(&mut conn, user_id)?
+        .ok_or("No Google tokens found")?;
+
+    let body = json!({
+        "client_id": client_secret.client_id,
+        "client_secret": client_secret.client_secret,
+        "refresh_token": tokens.refresh_token,
+        "grant_type": "refresh_token",
+    });
+
+    let response = app_state.reqwest_client
+        .post("https://oauth2.googleapis.com/token")
+        .json(&body).send().await?;
+
+    let refresh_response: RefreshResponse = response.json().await?;
+
+    database::update_access_token(&mut conn, user_id, &refresh_response.access_token)?;
+    Ok(refresh_response.access_token)
+}`,
+      explanation: "Called proactively before every Gmail/Calendar API call. Uses the stored refresh token (which never expires if offline access was granted) to get a fresh access token from Google. The new token is saved to the database. This function is called by the ToolExecutor, the email polling loop, and the meeting polling loop - all sharing the same refresh mechanism.",
+    },
+  ],
+};
+
+// ============================================================
+// CALENDAR TOOLS
+// ============================================================
+
+export const calendarTools: CodeAnnotation = {
+  file: "src/chat/tools/calendar.rs",
+  sections: [
+    {
+      title: "Timezone offset extraction from user's local time",
+      code: `pub fn extract_tz_offset(user_local_time: &str) -> &str {
+    // Input: "2026-04-06T14:30:00-04:00" -> "-04:00"
+    // Input: "2026-04-06T14:30:00Z"      -> "+00:00"
+    if user_local_time.ends_with('Z') {
+        return "+00:00";
+    }
+    let bytes = user_local_time.as_bytes();
+    let len = bytes.len();
+    if len >= 6 {
+        let candidate = &user_local_time[len - 6..];
+        if candidate.starts_with('+') || candidate.starts_with('-') {
+            return candidate;
+        }
+    }
+    "+00:00"  // fallback to UTC
+}
+
+pub fn date_to_rfc3339_start(date: &str, tz_offset: &str) -> String {
+    format!("{}T00:00:00{}", date, tz_offset)  // start of day
+}
+
+pub fn date_to_rfc3339_end_inclusive(date: &str, tz_offset: &str) -> String {
+    // Calendar API uses exclusive upper bound, so "through April 12"
+    // needs to be "before April 13 00:00"
+    if let Ok(d) = NaiveDate::parse_from_str(date, "%Y-%m-%d") {
+        let next_day = d + Duration::days(1);
+        format!("{}T00:00:00{}", next_day.format("%Y-%m-%d"), tz_offset)
+    } else {
+        format!("{}T23:59:59{}", date, tz_offset)  // fallback
+    }
+}`,
+      explanation: "The timezone handling that took three tries to get right. The user's browser sends their local time as an ISO 8601 string with the timezone offset baked in. We parse the last 6 characters to extract the offset (e.g. '-04:00' for EDT). This offset is then used to construct RFC3339 date boundaries for the Calendar API. The end date is incremented by one day because the API uses exclusive upper bounds - 'events on April 12' needs time_max of April 13 midnight, not April 12 midnight.",
+    },
+    {
+      title: "Two-phase participant filtering",
+      code: `pub async fn get_calendar_events_by_participant(
+    client: &CalendarClient, participant: &str,
+    start_date: Option<&str>, end_date: Option<&str>,
+    user_local_time: &str, user_timezone: &str, progress: ProgressSender,
+) -> ToolResult {
+    // Phase 1: Use Calendar API's "q" parameter for initial server-side search
+    let events = list_events_all_calendars(
+        client, time_min, time_max, Some(participant), 2500, tz_param
+    ).await?;
+
+    // Phase 2: Client-side verification - API search is fuzzy, so we double-check
+    let participant_lower = participant.to_lowercase();
+    let filtered: Vec<&ParsedEvent> = events.iter().filter(|e| {
+        for a in &e.attendees {
+            if a.to_lowercase().contains(&participant_lower) { return true; }
+        }
+        if e.organizer.to_lowercase().contains(&participant_lower) { return true; }
+        false
+    }).collect();
+
+    // Format and return filtered results
+}`,
+      explanation: "Finding events with a specific person uses two phases because the Calendar API's search is fuzzy - it matches against event titles and descriptions too, not just attendees. Phase 1 uses the API's 'q' parameter for a broad server-side search. Phase 2 filters client-side to only events where the person is actually an attendee or organizer. The case-insensitive contains match handles variations like 'Sarah' matching 'Sarah Chen <sarah@nzymes.com>'.",
+    },
+  ],
+};
+
+// ============================================================
+// SERVER SETUP
+// ============================================================
+
+export const mainServer: CodeAnnotation = {
+  file: "src/main.rs",
+  sections: [
+    {
+      title: "Database initialization with SQLite pragmas",
+      code: `struct SqlitePragmas;
+
+impl CustomizeConnection<SqliteConnection, r2d2::Error> for SqlitePragmas {
+    fn on_acquire(&self, conn: &mut SqliteConnection) -> Result<(), r2d2::Error> {
+        // WAL mode allows concurrent readers during writes
+        sql_query("PRAGMA journal_mode = WAL").execute(conn)?;
+        // Wait up to 5s for a write lock instead of failing immediately
+        sql_query("PRAGMA busy_timeout = 5000").execute(conn)?;
+        Ok(())
+    }
+}
+
+let db_pool = Pool::builder()
+    .max_size(5)
+    .connection_customizer(Box::new(SqlitePragmas))
+    .build(manager)?;
+
+// Run migrations on startup
+conn.run_pending_migrations(MIGRATIONS)?;`,
+      explanation: "Every database connection gets two pragmas set on acquire. WAL (Write-Ahead Logging) mode lets the background polling tasks read while the chat endpoint writes - without it, concurrent access would deadlock. The 5-second busy timeout prevents immediate failures when multiple writes compete - instead of erroring, SQLite waits up to 5 seconds for the lock. Pool is capped at 5 connections because SQLite has limited concurrency. Migrations run automatically on startup so the schema stays in sync with code.",
+    },
+    {
+      title: "Route registration and background task spawning",
+      code: `// API routes
+let chat_routes = Router::new()
+    .route("/api/chat", post(chat_endpoint::chat_stream))
+    .route("/api/chat/stop", post(chat_endpoint::stop_stream))
+    .route("/api/chat/subscribe", post(chat_endpoint::subscribe_stream))
+    .route("/api/email-chat", post(email::chat_endpoint::email_chat_stream))
+    .route("/api/meeting-chat", post(meetings::chat_endpoint::meeting_chat_stream))
+    .route("/api/chad-ads/callback", get(chad_ads_callback))
+    .layer(DefaultBodyLimit::max(16 * 1024 * 1024));  // 16MB for image uploads
+
+// Background tasks - polling (will be replaced by webhooks)
+let email_interval: u64 = env::var("EMAIL_POLL_INTERVAL_SECS")
+    .ok().and_then(|v| v.parse().ok()).unwrap_or(120);
+email::polling::start_polling_task(app_state.clone(), email_interval);
+
+let meeting_interval: u64 = env::var("MEETING_POLL_INTERVAL_SECS")
+    .ok().and_then(|v| v.parse().ok()).unwrap_or(300);
+meetings::polling::start_polling_task(app_state.clone(), meeting_interval);`,
+      explanation: "Three chat SSE endpoints (main, email, meeting) plus a Chad Ads OAuth callback. The 16MB body limit accommodates image uploads (users can paste images into chat). Two background polling tasks spawn on startup with configurable intervals via environment variables - 120s for email, 300s for meetings. These run independently from the web server, sharing the same database pool and HTTP client through AppState.",
+    },
+  ],
+};
+
+// ============================================================
+// TOOL DEFINITIONS
+// ============================================================
+
+export const toolDefinitions: CodeAnnotation = {
+  file: "src/chat/tools/mod.rs",
+  sections: [
+    {
+      title: "Conditional tool availability based on admin status",
+      code: `pub fn tool_definitions(is_admin: bool) -> Vec<ToolDefinition> {
+    let mut tools = vec![
+        // --- Non-admin tools (available to everyone) ---
+        ToolDefinition {
+            name: SEARCH_EMAILS.to_string(),
+            description: "Search emails using Gmail query syntax...".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Gmail search query" },
+                    "max_results": { "type": "integer", "description": "Max results (default 10)" },
+                    "category": { "type": "string", "enum": ["primary","social","promotions","updates"] }
+                },
+                "required": ["query"]
+            }),
+        },
+        // ... ~20 more non-admin tools for Gmail, Calendar, Tasks, Recorder, Chad Ads ...
+    ];
+
+    if is_admin {
+        tools.push(ToolDefinition {
+            name: ADMIN_SEARCH_USER_EMAILS.to_string(),
+            description: "Admin only: Search another workspace user's Gmail...".to_string(),
+            input_schema: json!({
+                "properties": {
+                    "target_user_email": { "type": "string" },
+                    "query": { "type": "string" }
+                },
+                "required": ["target_user_email", "query"]
+            }),
+        });
+        // ... admin variants for Gmail, Calendar, Tasks, Directory ...
+    }
+
+    tools
+}`,
+      explanation: "This is the master file that defines every tool Claude can use - about 30+ tools total. The is_admin flag controls which tools are included in the API request. Non-admin users get Gmail read/send, Calendar read, Tasks CRUD, Recording search, and Chad Ads. Admin users additionally get workspace-wide search across all team members' email, calendar, and tasks, plus the Directory API for listing users. By conditionally including tools (not just checking permissions at execution), Claude literally doesn't know admin tools exist for non-admin users - it can't try to call what it can't see.",
+    },
+  ],
+};
+
+// ============================================================
+// FRONTEND - EMAIL TRIAGE UI
+// ============================================================
+
+export const emailTriageUI: CodeAnnotation = {
+  file: "src/components/email_triage.rs",
+  sections: [
+    {
+      title: "Queue management and email advancement",
+      code: `// State
+let email_queue: RwSignal<Vec<EmailQueueItem>> = RwSignal::new(vec![]);
+let current_index: RwSignal<usize> = RwSignal::new(0);
+let queue_state: RwSignal<String> = RwSignal::new("loading".to_string());
+let email_body: RwSignal<String> = RwSignal::new(String::new());
+
+// Load queue on mount
+Effect::new(move || {
+    spawn_local(async move {
+        let queue = get_email_queue(auth_token).await?;
+        if queue.is_empty() {
+            queue_state.set("empty".to_string());
+        } else {
+            email_queue.set(queue);
+            queue_state.set("active".to_string());
+        }
+    });
+});
+
+// When current_index changes, load the new email's body and reset chat
+Effect::new(move || {
+    let idx = current_index.get();
+    let queue = email_queue.get();
+    if let Some(entry) = queue.get(idx) {
+        spawn_local(async move {
+            let body = get_email_content(auth_token, entry.id).await?;
+            email_body.set(body);
+            chat_messages.set(vec![]);  // reset chat for new email
+        });
+    }
+});
+
+fn advance_to_next() {
+    let idx = current_index.get();
+    let queue = email_queue.get();
+    if idx + 1 < queue.len() {
+        current_index.set(idx + 1);
+    } else {
+        // End of queue - reload to check for new emails
+        spawn_local(async move {
+            let new_queue = get_email_queue(auth_token).await?;
+            if new_queue.is_empty() {
+                queue_state.set("complete".to_string());
+            } else {
+                email_queue.set(new_queue);
+                current_index.set(0);
+            }
+        });
+    }
+}`,
+      explanation: "The email triage UI works like a card deck - you review one email at a time, take action, then advance to the next. When you reach the end, it reloads the queue to check for new emails that arrived while you were triaging. Each email advance loads the full body (lazy, not preloaded) and resets the chat conversation. The queue_state signal drives the UI between loading, active (has emails), empty (nothing to review), and complete (finished the batch).",
+    },
+  ],
+};
+
+// ============================================================
+// FRONTEND - EMAIL API
+// ============================================================
+
+export const emailAPI: CodeAnnotation = {
+  file: "src/components/email_api.rs",
+  sections: [
+    {
+      title: "Archive with Gmail label removal",
+      code: `#[server(UpdateEmailStatusApi, "/api")]
+pub async fn update_email_status_api(
+    auth_token: String, entry_id: i32, status: String,
+) -> Result<(), ServerFnError> {
+    // Verify ownership
+    let user = database::verify_auth_token(&mut conn, &auth_token)?
+        .ok_or(ServerFnError::new("Invalid token"))?;
+    let entry = database::get_email_queue_entry(&mut conn, entry_id)?;
+    if entry.user_id != user.id { return Err(ServerFnError::new("Not your email")); }
+
+    // Update status in our database
+    database::update_email_status(&mut conn, entry_id, &status)?;
+
+    // Also remove from Gmail INBOX (best-effort, non-blocking)
+    if status == "archived" {
+        if let Ok(token) = refresh_access_token(&app_state, user.id).await {
+            let gmail = GmailClient::new(app_state.reqwest_client.clone(), token);
+            let _ = gmail.modify_message(&entry.gmail_message_id,
+                &[], &["INBOX"]  // add no labels, remove INBOX
+            ).await;  // ignore errors - archiving in our DB is what matters
+        }
+    }
+    Ok(())
+}`,
+      explanation: "When the user archives an email in the triage queue, two things happen: (1) the status is updated in our database (the important part), and (2) the INBOX label is removed from the email in Gmail (best-effort). The Gmail API call is fire-and-forget - if it fails, the email stays in Gmail's inbox but is still marked as processed in our queue. This prevents the email from reappearing in the next triage cycle. Ownership is verified before any action.",
+    },
+  ],
+};
+
+// ============================================================
+// FRONTEND - MEETING REVIEW UI
+// ============================================================
+
+export const meetingReviewUI: CodeAnnotation = {
+  file: "src/components/meeting_review.rs",
+  sections: [
+    {
+      title: "Batch task approval on Done",
+      code: `fn on_done() {
+    spawn_local(async move {
+        let tasks = draft_tasks.get();
+        let pending_tasks: Vec<_> = tasks.iter()
+            .filter(|t| t.status == "pending")
+            .collect();
+
+        // Approve all pending tasks (creates Google Tasks)
+        for task in &pending_tasks {
+            let _ = approve_draft_task_api(
+                auth_token, task.id, &task.title,
+                task.assignee_email.as_deref(),
+            ).await;
+        }
+
+        // Mark meeting as reviewed
+        mark_meeting_reviewed_api(auth_token, meeting_id).await?;
+
+        // Advance to next meeting
+        advance_to_next();
+    });
+}
+
+fn on_reject(task_id: i32) {
+    // Remove from local list immediately (optimistic UI)
+    draft_tasks.update(|tasks| {
+        tasks.retain(|t| t.id != task_id);
+    });
+    // Then persist the rejection
+    spawn_local(async move {
+        reject_draft_task_api(auth_token, task_id).await;
+    });
+}`,
+      explanation: "When the user clicks 'Done - Next Meeting', all remaining pending tasks are batch-approved (each creates a Google Task), the meeting is marked as reviewed, and the UI advances to the next meeting. Individual task rejection is optimistic - the task is removed from the UI immediately, then the API call happens in the background. This makes the UI feel snappy even if the network is slow.",
+    },
+  ],
+};
+
+// ============================================================
+// FRONTEND - MEETING API
+// ============================================================
+
+export const meetingAPI: CodeAnnotation = {
+  file: "src/components/meeting_api.rs",
+  sections: [
+    {
+      title: "Task approval with delegation and deduplication",
+      code: `#[server(ApproveDraftTaskApi, "/api")]
+pub async fn approve_draft_task_api(
+    auth_token: String, task_id: i32, title: String,
+    assignee_email: Option<String>,
+) -> Result<(), ServerFnError> {
+    // Determine whose Google Tasks to create in
+    let (tasks_client, target_label) = if let Some(ref email) = assignee_email {
+        if email.ends_with("@digitalwillads.com") {
+            // Workspace user - use service account delegation
+            match create_delegated_tasks_client(&app_state.reqwest_client, email).await {
+                Ok(client) => (client, format!("{}'s tasks", email)),
+                Err(_) => {
+                    // Delegation failed - fall back to current user's account
+                    let client = get_tasks_client_for_user(&app_state, user.id).await?;
+                    (client, format!("your tasks (delegation to {} failed)", email))
+                }
+            }
+        } else {
+            // External user - create in current user's account with note
+            let client = get_tasks_client_for_user(&app_state, user.id).await?;
+            (client, "your tasks".to_string())
+        }
+    } else {
+        let client = get_tasks_client_for_user(&app_state, user.id).await?;
+        ("your tasks".to_string())
+    };
+
+    // Find or create "Meeting Action Items" task list
+    let lists = tasks_client.list_task_lists().await?;
+    let list_id = lists.iter()
+        .find(|l| l.title == "Meeting Action Items")
+        .map(|l| l.id.clone())
+        .unwrap_or_else(|| {
+            tasks_client.create_task_list("Meeting Action Items").await?.id
+        });
+
+    // Deduplication - skip if task with same title already exists
+    let existing = tasks_client.list_tasks(&list_id, false, None, None, None, None).await?;
+    if existing.iter().any(|t| t.title == title) {
+        return Ok(());  // already exists
+    }
+
+    // Create the task with meeting context in notes
+    let task = tasks_client.create_task(&list_id, &title, Some(&notes), None, None, None).await?;
+
+    // Update draft task status to "approved" with google_task_id
+    database::update_draft_task_status(&mut conn, task_id, "approved",
+        Some(&task.id), Some(&list_id))?;
+    Ok(())
+}`,
+      explanation: "The most complex approval logic in the app. When a draft task is approved: (1) If the assignee is a @digitalwillads.com user, try to create the task directly in THEIR Google Tasks using service account delegation. (2) If delegation fails, fall back to the current user's account with a note. (3) If the assignee is external (not workspace), create in the current user's account. Tasks always go into a 'Meeting Action Items' list (created if it doesn't exist). Deduplication prevents the same task from being created twice if the user clicks Done multiple times. The google_task_id is stored so we can reference it later.",
+    },
+  ],
+};
+
+// ============================================================
+// FRONTEND - CHAT PAGE
+// ============================================================
+
+export const chatPage: CodeAnnotation = {
+  file: "src/components/chat_page.rs",
+  sections: [
+    {
+      title: "Tab management and badge polling",
+      code: `// Tab state
+let active_tab: RwSignal<String> = RwSignal::new("chat".to_string());
+let email_badge_count: RwSignal<i64> = RwSignal::new(0);
+let meeting_badge_count: RwSignal<i64> = RwSignal::new(0);
+
+// Scope checking on load
+Effect::new(move || {
+    spawn_local(async move {
+        let missing = check_missing_scopes(auth_token).await?;
+        if !missing.is_empty() {
+            chat_disabled.set(true);
+            missing_scopes.set(missing);
+            scope_auth_url.set(Some(get_scope_auth_url(auth_token).await?));
+        }
+    });
+});
+
+// Badge polling loop - runs every 30 seconds
+Effect::new(move || {
+    spawn_local(async move {
+        loop {
+            if let Ok(count) = get_email_badge_count(auth_token).await {
+                email_badge_count.set(count);
+            }
+            if let Ok(count) = get_meeting_badge_count(auth_token).await {
+                meeting_badge_count.set(count);
+            }
+            gloo_timers::future::sleep(Duration::from_secs(30)).await;
+        }
+    });
+});
+
+// Tab rendering
+match active_tab.get().as_str() {
+    "email" => view! { <EmailTriageCard auth_token badge_count=email_badge_count /> },
+    "meetings" => view! { <MeetingReviewCard auth_token badge_count=meeting_badge_count /> },
+    _ => view! { <ChatBox auth_token /* ... */ /> },
+}`,
+      explanation: "The main page orchestrates three tabs: Chat (default), Email (triage), and Meetings (review). On load, it checks for missing OAuth scopes and shows an authorization banner if any are missing. Badge counts poll every 30 seconds so the user sees how many emails and meetings are waiting for review without switching tabs. Each tab renders its own self-contained component. The Chad Ads connection check is separate and non-blocking - it shows a banner but doesn't disable chat.",
+    },
+  ],
+};
+
+// ============================================================
+// FRONTEND - CHAT BOX
+// ============================================================
+
+export const chatBox: CodeAnnotation = {
+  file: "src/components/chat_box.rs",
+  sections: [
+    {
+      title: "SSE streaming and thread management",
+      code: `fn send_message() {
+    // Build message with image blocks (if pasted) + text
+    let blocks = pending_images.get().iter()
+        .map(|(data, mime)| UiContentBlock::Image { data, media_type: mime })
+        .chain(std::iter::once(UiContentBlock::Text { text: input_text.get() }))
+        .collect();
+
+    let message = UiChatMessage { role: "user", content: blocks };
+
+    // Create thread if needed (uses first 40 chars as title)
+    if current_thread_id.get().is_none() {
+        let title = if has_only_images { "Image" } else { &text[..40] };
+        let thread_id = create_thread_api(auth_token, title).await?;
+        current_thread_id.set(Some(thread_id));
+    }
+
+    // Trigger server-side generation
+    start_chat_api(auth_token, thread_id, messages).await?;
+
+    // Subscribe to SSE stream
+    subscribe_to_stream(thread_id);
+}
+
+fn subscribe_to_stream(thread_id: i32) {
+    let event_source = EventSource::new(&format!("/api/chat/subscribe?thread_id={}", thread_id));
+    event_source.on_message(move |event| {
+        match event.type_ {
+            "text"        => streaming_text.update(|t| t.push_str(&event.data)),
+            "tool_call"   => { /* show tool indicator */ },
+            "tool_result" => { /* show tool output */ },
+            "done"        => { is_streaming.set(false); merge_streaming_text(); },
+            "error"       => { /* show error */ },
+        }
+    });
+}
+
+fn stop_message() {
+    stream_cancel.set(true);
+    // Merge any in-flight text
+    // Mark pending tool calls as "Interrupted"
+}`,
+      explanation: "The main chat UI handles the full lifecycle: composing messages (text + pasted images), creating threads on first message, triggering server-side generation, and subscribing to the SSE stream for real-time updates. Streaming text accumulates in a separate signal (streaming_text) to avoid DOM thrashing - it's only merged into the message list when the stream completes. The stop button cancels gracefully by marking pending tool calls as 'Interrupted' so the user knows what was in progress. Thread titles are auto-generated from the first 40 characters of the first message.",
+    },
+  ],
+};

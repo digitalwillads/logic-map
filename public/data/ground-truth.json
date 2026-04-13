@@ -43,7 +43,7 @@
       "id": "event_ingestion",
       "name": "Event Ingestion",
       "intent": "Collects website visitor events (page views, form submissions, ad clicks) and writes them directly to BigQuery in real-time.",
-      "description": "A lightweight JavaScript tracking script runs on client websites via Google Tag Manager. When a visitor loads a page, the script captures the page URL, referrer, UTM parameters, ad click IDs (gclid, fbclid), device info, and session data. On form submission, it captures email/phone/name and stitches the anonymous visitor to a known identity. Events are POSTed to a single endpoint on the agency-api (Fly.io) which validates the payload and does a BigQuery streaming insert. No batching, no queue, no third-party - events land in BigQuery within seconds.",
+      "description": "A lightweight JavaScript tracking script runs on client websites via Google Tag Manager. When a visitor loads a page, the script captures the page URL, referrer, UTM parameters, ad click IDs (gclid, fbclid), device info, and session data. On form submission, it captures email/phone/name and stitches the anonymous visitor to a known identity. Events are POSTed to the client's own domain (e.g., t.lbilocals.com) via a Cloudflare Worker that acts as both proxy and ingestion endpoint. The Worker extracts the event payload, validates it, and writes directly to BigQuery via streaming insert - no intermediate server needed. For clients without the proxy set up yet, a fallback endpoint on agency-api (Fly.io) handles ingestion.",
       "why": "Every ad platform wants to claim full credit for every conversion. Facebook says it drove the sale, Google says it drove the sale, the email says it drove the sale. The only way to know the truth is to collect your own first-party data from the actual website and stitch it together yourself. That's what Ground Truth does.",
       "who": "Will sets up tracking for each client. The tracking script runs automatically on every page load. Will and the team query BigQuery to analyze attribution, build dashboards, and report to clients.",
       "limitations": [
@@ -118,8 +118,8 @@
         },
         {
           "id": "event_ingestion.ingest_endpoint",
-          "name": "Event Ingestion Endpoint",
-          "description": "POST /gt/events on agency-api. Receives event payloads from the tracking script, validates them (requires client_id, event_name, anonymous_id), enriches with server-side data (timestamp, IP-based geo), and does a BigQuery streaming insert into the client's gt_{slug}.events table. Returns 200 on success, 400 on validation error, 500 on BigQuery failure.",
+          "name": "Fallback Ingestion Endpoint (Fly.io)",
+          "description": "POST /gt/events on agency-api. Fallback for clients where the Cloudflare Worker proxy is not yet set up. Same logic as the Worker: validates the payload, enriches with server-side data, and does a BigQuery streaming insert. Returns 200 on success. Used during initial setup and testing before the proxy is configured.",
           "source": "agency-api/src/api/ (to be built)",
           "decisions": [
             {
@@ -151,14 +151,48 @@
         },
         {
           "id": "cloudflare_proxy",
-          "name": "Cloudflare First-Party Proxy",
-          "intent": "Serves the tracking script and receives events from the client's own domain to bypass ad blockers.",
-          "description": "Uses Cloudflare for SaaS to create a custom hostname (e.g., t.clientdomain.com) that proxies requests to our ingestion endpoint. The client adds a CNAME record pointing their subdomain to our Cloudflare zone. A Cloudflare Worker handles the proxying and sets server-side cookies for session persistence.",
+          "name": "Cloudflare Worker (Ingestion + Proxy)",
+          "intent": "The primary ingestion endpoint. Receives events from the client's own domain, writes directly to BigQuery, and sets server-side cookies for session persistence.",
+          "description": "A Cloudflare Worker deployed via Cloudflare for SaaS. Each client gets a custom hostname (e.g., t.lbilocals.com) that routes to the Worker. The Worker does three things: (1) receives the event POST from the tracking script, validates it, and does a BigQuery streaming insert using the service account credentials, (2) serves the tracking SDK JavaScript from the client's own domain so ad blockers don't block it, (3) sets server-side cookies (via Set-Cookie headers) for session persistence that survives Safari ITP's 7-day limit on client-side cookies. The browser never talks to a third-party domain - everything looks like first-party traffic.",
           "limitations": [
-            "Requires client to add a DNS record - adds a setup step",
-            "Not yet implemented for all clients - falls back to direct endpoint"
+            "Requires client to add a CNAME DNS record pointing their subdomain to our Cloudflare zone",
+            "Worker needs BigQuery service account credentials stored as Worker secrets",
+            "Not yet implemented - this is the target architecture"
           ],
-          "functions": []
+          "functions": [
+            {
+              "id": "cloudflare_proxy.event_handler",
+              "name": "Event Handler",
+              "description": "POST /gt/events - receives the event payload, validates required fields (client_id, event_name, anonymous_id), enriches with server-side data (timestamp, IP-based geo from CF headers), and writes to BigQuery. Returns 200 with a Set-Cookie for session persistence.",
+              "decisions": [
+                {
+                  "id": "cloudflare_proxy.event_handler.geo",
+                  "name": "Geo enrichment from Cloudflare headers",
+                  "description": "The Worker reads CF-IPCountry and cf.city headers to get visitor country and city without needing a separate geo lookup service.",
+                  "rationale": "Cloudflare provides geo data for free on every request. No need for MaxMind or a separate GeoIP service."
+                }
+              ]
+            },
+            {
+              "id": "cloudflare_proxy.sdk_proxy",
+              "name": "SDK Proxy",
+              "description": "GET /gt/sdk.js - serves the tracking script from the client's own domain. The browser loads t.clientdomain.com/gt/sdk.js instead of a third-party CDN, so ad blockers don't interfere.",
+              "decisions": []
+            },
+            {
+              "id": "cloudflare_proxy.cookie_persistence",
+              "name": "Server-Side Cookie Persistence",
+              "description": "Sets the anonymous_id and session_id via Set-Cookie headers in the response. Server-set cookies survive Safari ITP (which clears client-side JavaScript cookies after 7 days).",
+              "decisions": [
+                {
+                  "id": "cloudflare_proxy.cookie_persistence.itp",
+                  "name": "Safari ITP bypass",
+                  "description": "Safari ITP deletes cookies set by JavaScript after 7 days, but cookies set via HTTP Set-Cookie headers from the same domain persist normally. By having the Worker set cookies server-side, visitor identity persists for the full cookie lifetime.",
+                  "rationale": "Without this, returning visitors on Safari/iOS look like new visitors every week, breaking attribution for longer sales cycles."
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -453,13 +487,13 @@
   "relationships": [
     {
       "from": "event_ingestion.tracking_script",
-      "to": "event_ingestion.ingest_endpoint",
-      "description": "The tracking script POSTs event payloads to the ingestion endpoint on every page view and form submission."
+      "to": "cloudflare_proxy",
+      "description": "The tracking script POSTs event payloads to the Cloudflare Worker (primary) or the Fly.io fallback endpoint on every page view and form submission."
     },
     {
-      "from": "event_ingestion.ingest_endpoint",
+      "from": "cloudflare_proxy",
       "to": "bigquery",
-      "description": "The ingestion endpoint does a BigQuery streaming insert for each event. Events land in the client's gt_{slug}.events table within seconds."
+      "description": "The Cloudflare Worker writes events directly to BigQuery via streaming insert. Events land in the client's gt_{slug}.events table within seconds."
     },
     {
       "from": "crm_sync.etl_runner",
